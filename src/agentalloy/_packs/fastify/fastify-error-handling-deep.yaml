@@ -1,0 +1,482 @@
+skill_type: domain
+skill_id: fastify-error-handling-deep
+canonical_name: Fastify Error Handling Deep
+category: engineering
+skill_class: domain
+domain_tags:
+- fastify
+- error-handling
+- set-error-handler
+- validation-errors
+- uncaught
+always_apply: false
+phase_scope: [build]
+category_scope: [framework]
+author: navistone
+change_summary: hand-authored Opus expansion
+raw_prose: |-
+  # Fastify Error Handling Deep
+
+  ## Overview
+
+  Fastify routes errors through a layered pipeline. The active setErrorHandler runs for thrown/rejected errors; schema validation errors get a separate schemaErrorFormatter; the onError hook fires alongside. Error handlers honor encapsulation.
+
+  ---
+
+  ## setErrorHandler
+
+  ```ts
+  app.setErrorHandler((error, request, reply) => {
+      request.log.error(error);
+
+      if (error.validation) {
+          return reply.status(400).send({
+              error: 'Validation failed',
+              details: error.validation,
+          });
+      }
+
+      if (error instanceof BusinessRuleError) {
+          return reply.status(422).send({
+              error: error.message,
+              code: error.code,
+          });
+      }
+
+      // Generic 500
+      reply.status(500).send({ error: 'Internal server error' });
+  });
+  ```
+
+  The handler runs for any thrown or rejected error in routes or hooks. Returns determine the response.
+
+  ## Validation Errors
+
+  Fastify throws a structured error when JSON Schema validation fails:
+
+  ```ts
+  // error.validation = [
+  //   { instancePath: '/email', schemaPath: '#/properties/email/format', keyword: 'format', params: { format: 'email' }, message: 'must match format "email"' }
+  // ]
+  ```
+
+  Customize with `schemaErrorFormatter`:
+
+  ```ts
+  app.setSchemaErrorFormatter((errors, dataVar) => {
+      return new Error('validation: ' + errors.map(e => e.instancePath + ' ' + e.message).join('; '));
+  });
+  ```
+
+  Or handle in setErrorHandler:
+
+  ```ts
+  if (error.validation) {
+      return reply.status(400).send({
+          error: 'Validation failed',
+          fields: error.validation.map(e => ({
+              field: e.instancePath.replace(/^\//, ''),
+              message: e.message,
+          })),
+      });
+  }
+  ```
+
+  ## Error Codes vs Status
+
+  ```ts
+  class NotFoundError extends Error {
+      statusCode = 404;
+      code = 'USER_NOT_FOUND';
+  }
+
+  throw new NotFoundError('user not found');
+  ```
+
+  Fastify reads `statusCode` automatically. The `code` field flows to monitoring; clients can switch on it.
+
+  ```ts
+  app.setErrorHandler((error, req, reply) => {
+      reply.status(error.statusCode || 500).send({
+          error: error.message,
+          code: error.code,
+          requestId: req.id,
+      });
+  });
+  ```
+
+  Including `requestId` lets users report errors with a key the team can grep logs for.
+
+  ## 404 and 405 Handlers
+
+  ```ts
+  app.setNotFoundHandler((req, reply) => {
+      reply.status(404).send({ error: 'route not found', path: req.url });
+  });
+
+  app.setNotFoundHandler({ preValidation: [authHandler] }, (req, reply) => {
+      // 404 handler with auth
+  });
+  ```
+
+  405 (method not allowed) needs explicit registration via `fastify-method-override` or the `attachValidation` route option. Most APIs don't bother; 404 catches both cases.
+
+  ## onError Hook
+
+  ```ts
+  app.addHook('onError', async (req, reply, error) => {
+      Sentry.captureException(error, {
+          contexts: { request: { url: req.url, method: req.method } },
+      });
+  });
+  ```
+
+  Fires when an error occurs but doesn't transform the response. Use for monitoring side effects.
+
+  ## Encapsulation
+
+  Error handlers honor plugin scope:
+
+  ```ts
+  app.register(async (admin) => {
+      admin.setErrorHandler((error, req, reply) => {
+          reply.send({ adminError: error.message });
+      });
+      admin.get('/admin/dashboard', ...);
+  });
+
+  app.get('/public', ...);  // uses default handler, not admin's
+  ```
+
+  Each plugin can customize errors for its routes without affecting siblings.
+
+  ## Error Logging Levels
+
+  ```ts
+  app.setErrorHandler((error, req, reply) => {
+      if (error.statusCode && error.statusCode < 500) {
+          req.log.warn({ err: error }, 'client error');
+      } else {
+          req.log.error({ err: error }, 'server error');
+      }
+      // ...
+  });
+  ```
+
+  4xx errors (validation, not-found, auth) shouldn't page on-call. 5xx should. Log accordingly.
+
+  ## Async Errors
+
+  ```ts
+  app.get('/data', async () => {
+      const data = await fetchData();  // rejection caught
+      return data;
+  });
+
+  app.get('/data', (req, reply) => {
+      fetchData()  // not awaited!
+          .then(data => reply.send(data))
+          .catch(err => { /* must handle manually */ });
+  });
+  ```
+
+  Async handlers: thrown / rejected errors auto-route to setErrorHandler. Sync handlers with manual promises: catch yourself or call `reply.send(err)`.
+
+  ## Common Pitfalls
+
+  - **Returning instead of replying.** A handler that does `return { error: '...' }` sends a 200 with that body. Use `reply.status(...)` for non-200.
+  - **No requestId in errors.** Hard to correlate user reports to logs. Always include `req.id`.
+  - **Logging at error level for 4xx.** Pages on-call for invalid input. Use warn or info.
+  - **Stack traces in client errors.** Information disclosure. Strip in production responses; keep in logs.
+  - **Custom error classes without `statusCode`.** Default to 500. Always set explicitly.
+
+  ## Verification
+
+  A working error pipeline:
+
+  - Validation errors return structured 400 with field details.
+  - Business errors return appropriate status (4xx vs 5xx).
+  - Server errors log with stack; clients see generic message.
+  - requestId on every error response correlates to logs.
+  - Sentry / monitoring captures every 5xx with context.
+
+fragments:
+- fragment_type: execution
+  sequence: 1
+  content: |-
+    ## setErrorHandler
+
+    ```ts
+    app.setErrorHandler((error, request, reply) => {
+        request.log.error(error);
+
+        if (error.validation) {
+            return reply.status(400).send({
+                error: 'Validation failed',
+                details: error.validation,
+            });
+        }
+
+        if (error instanceof BusinessRuleError) {
+            return reply.status(422).send({
+                error: error.message,
+                code: error.code,
+            });
+        }
+
+        // Generic 500
+        reply.status(500).send({ error: 'Internal server error' });
+    });
+    ```
+
+    The handler runs for any thrown or rejected error in routes or hooks. Returns determine the response.
+- fragment_type: execution
+  sequence: 2
+  content: |-
+    ## Validation Errors
+
+    Fastify throws a structured error when JSON Schema validation fails:
+
+    ```ts
+    // error.validation = [
+    //   { instancePath: '/email', schemaPath: '#/properties/email/format', keyword: 'format', params: { format: 'email' }, message: 'must match format "email"' }
+    // ]
+    ```
+
+    Customize with `schemaErrorFormatter`:
+
+    ```ts
+    app.setSchemaErrorFormatter((errors, dataVar) => {
+        return new Error('validation: ' + errors.map(e => e.instancePath + ' ' + e.message).join('; '));
+    });
+    ```
+
+    Or handle in setErrorHandler:
+
+    ```ts
+    if (error.validation) {
+        return reply.status(400).send({
+            error: 'Validation failed',
+            fields: error.validation.map(e => ({
+                field: e.instancePath.replace(/^\//, ''),
+                message: e.message,
+            })),
+        });
+    }
+    ```
+- fragment_type: rationale
+  sequence: 3
+  content: |-
+    ## Error Codes vs Status
+
+    ```ts
+    class NotFoundError extends Error {
+        statusCode = 404;
+        code = 'USER_NOT_FOUND';
+    }
+
+    throw new NotFoundError('user not found');
+    ```
+
+    Fastify reads `statusCode` automatically. The `code` field flows to monitoring; clients can switch on it.
+
+    ```ts
+    app.setErrorHandler((error, req, reply) => {
+        reply.status(error.statusCode || 500).send({
+            error: error.message,
+            code: error.code,
+            requestId: req.id,
+        });
+    });
+    ```
+
+    Including `requestId` lets users report errors with a key the team can grep logs for.
+- fragment_type: execution
+  sequence: 4
+  content: |-
+    ## 404 and 405 Handlers
+
+    ```ts
+    app.setNotFoundHandler((req, reply) => {
+        reply.status(404).send({ error: 'route not found', path: req.url });
+    });
+
+    app.setNotFoundHandler({ preValidation: [authHandler] }, (req, reply) => {
+        // 404 handler with auth
+    });
+    ```
+
+    405 (method not allowed) needs explicit registration via `fastify-method-override` or the `attachValidation` route option. Most APIs don't bother; 404 catches both cases.
+- fragment_type: execution
+  sequence: 5
+  content: |-
+    ## onError Hook
+
+    ```ts
+    app.addHook('onError', async (req, reply, error) => {
+        Sentry.captureException(error, {
+            contexts: { request: { url: req.url, method: req.method } },
+        });
+    });
+    ```
+
+    Fires when an error occurs but doesn't transform the response. Use for monitoring side effects.
+- fragment_type: execution
+  sequence: 6
+  content: |-
+    ## Encapsulation
+
+    Error handlers honor plugin scope:
+
+    ```ts
+    app.register(async (admin) => {
+        admin.setErrorHandler((error, req, reply) => {
+            reply.send({ adminError: error.message });
+        });
+        admin.get('/admin/dashboard', ...);
+    });
+
+    app.get('/public', ...);  // uses default handler, not admin's
+    ```
+
+    Each plugin can customize errors for its routes without affecting siblings.
+- fragment_type: execution
+  sequence: 7
+  content: |-
+    ## Error Logging Levels
+
+    ```ts
+    app.setErrorHandler((error, req, reply) => {
+        if (error.statusCode && error.statusCode < 500) {
+            req.log.warn({ err: error }, 'client error');
+        } else {
+            req.log.error({ err: error }, 'server error');
+        }
+        // ...
+    });
+    ```
+
+    4xx errors (validation, not-found, auth) shouldn't page on-call. 5xx should. Log accordingly.
+- fragment_type: execution
+  sequence: 8
+  content: |-
+    ## Async Errors
+
+    ```ts
+    app.get('/data', async () => {
+        const data = await fetchData();  // rejection caught
+        return data;
+    });
+
+    app.get('/data', (req, reply) => {
+        fetchData()  // not awaited!
+            .then(data => reply.send(data))
+            .catch(err => { /* must handle manually */ });
+    });
+    ```
+
+    Async handlers: thrown / rejected errors auto-route to setErrorHandler. Sync handlers with manual promises: catch yourself or call `reply.send(err)`.
+- fragment_type: guardrail
+  sequence: 9
+  content: |-
+    ## Common Pitfalls
+
+    - **Returning instead of replying.** A handler that does `return { error: '...' }` sends a 200 with that body. Use `reply.status(...)` for non-200.
+    - **No requestId in errors.** Hard to correlate user reports to logs. Always include `req.id`.
+    - **Logging at error level for 4xx.** Pages on-call for invalid input. Use warn or info.
+    - **Stack traces in client errors.** Information disclosure. Strip in production responses; keep in logs.
+    - **Custom error classes without `statusCode`.** Default to 500. Always set explicitly.
+- fragment_type: verification
+  sequence: 10
+  content: |-
+    ## Verification
+
+    A working error pipeline:
+
+    - Validation errors return structured 400 with field details.
+    - Business errors return appropriate status (4xx vs 5xx).
+    - Server errors log with stack; clients see generic message.
+    - requestId on every error response correlates to logs.
+    - Sentry / monitoring captures every 5xx with context.
+- fragment_type: execution
+  sequence: 11
+  content: |-
+    ## Fastify Error Codes
+
+    * [FST_ERR_NOT_FOUND](#fst_err_not_found)
+    * [FST_ERR_OPTIONS_NOT_OBJ](#fst_err_options_not_obj)
+    * [FST_ERR_QSP_NOT_FN](#fst_err_qsp_not_fn)
+    * [FST_ERR_SCHEMA_CONTROLLER_BUCKET_OPT_NOT_FN](#fst_err_schema_controller_bucket_opt_not_fn)
+    * [FST_ERR_SCHEMA_ERROR_FORMATTER_NOT_FN](#fst_err_schema_error_formatter_not_fn)
+    * [FST_ERR_AJV_CUSTOM_OPTIONS_OPT_NOT_OBJ](#fst_err_ajv_custom_options_opt_not_obj)
+    * [FST_ERR_AJV_CUSTOM_OPTIONS_OPT_NOT_ARR](#fst_err_ajv_custom_options_opt_not_arr)
+    * [FST_ERR_CTP_ALREADY_PRESENT](#fst_err_ctp_already_present)
+    * [FST_ERR_CTP_INVALID_TYPE](#fst_err_ctp_invalid_type)
+    * [FST_ERR_CTP_EMPTY_TYPE](#fst_err_ctp_empty_type)
+    * [FST_ERR_CTP_INVALID_HANDLER](#fst_err_ctp_invalid_handler)
+    * [FST_ERR_CTP_INVALID_PARSE_TYPE](#fst_err_ctp_invalid_parse_type)
+    * [FST_ERR_CTP_BODY_TOO_LARGE](#fst_err_ctp_body_too_large)
+    * [FST_ERR_CTP_INVALID_MEDIA_TYPE](#fst_err_ctp_invalid_media_type)
+    * [FST_ERR_CTP_INVALID_CONTENT_LENGTH](#fst_err_ctp_invalid_content_length)
+    * [FST_ERR_CTP_EMPTY_JSON_BODY](#fst_err_ctp_empty_json_body)
+    * [FST_ERR_CTP_INVALID_JSON_BODY](#fst_err_ctp_invalid_json_body)
+    * [FST_ERR_CTP_INSTANCE_ALREADY_STARTED](#fst_err_ctp_instance_already_started)
+    * [FST_ERR_INSTANCE_ALREADY_LISTENING](#fst_err_instance_already_listening)
+    * [FST_ERR_DEC_ALREADY_PRESENT](#fst_err_dec_already_present)
+    * [FST_ERR_DEC_DEPENDENCY_INVALID_TYPE](#fst_err_dec_dependency_invalid_type)
+    * [FST_ERR_DEC_MISSING_DEPENDENCY](#fst_err_dec_missing_dependency)
+    * [FST_ERR_DEC_AFTER_START](#fst_err_dec_after_start)
+    * [FST_ERR_DEC_REFERENCE_TYPE](#fst_err_dec_reference_type)
+    * [FST_ERR_DEC_UNDECLARED](#fst_err_dec_undeclared)
+    * [FST_ERR_HOOK_INVALID_TYPE](#fst_err_hook_invalid_type)
+    * [FST_ERR_HOOK_INVALID_HANDLER](#fst_err_hook_invalid_handler)
+    * [FST_ERR_HOOK_INVALID_ASYNC_HANDLER](#fst_err_hook_invalid_async_handler)
+    * [FST_ERR_HOOK_NOT_SUPPORTED](#fst_err_hook_not_supported)
+    * [FST_ERR_MISSING_MIDDLEWARE](#fst_err_missing_middleware)
+    * [FST_ERR_HOOK_TIMEOUT](#fst_err_hook_timeout)
+    * [FST_ERR_LOG_INVALID_DESTINATION](#fst_err_log_invalid_destination)
+    * [FST_ERR_LOG_INVALID_LOGGER](#fst_err_log_invalid_logger)
+    * [FST_ERR_LOG_INVALID_LOGGER_INSTANCE](#fst_err_log_invalid_logger_instance)
+    * [FST_ERR_LOG_INVALID_LOGGER_CONFIG](#fst_err_log_invalid_logger_config)
+    * [FST_ERR_LOG_LOGGER_AND_LOGGER_INSTANCE_PROVIDED](#fst_err_log_logger_and_logger_instance_provided)
+    * [FST_ERR_REP_INVALID_PAYLOAD_TYPE](#fst_err_rep_invalid_payload_type)
+    * [FST_ERR_REP_RESPONSE_BODY_CONSUMED](#fst_err_rep_response_body_consumed)
+    * [FST_ERR_REP_READABLE_STREAM_LOCKED](#fst_err_rep_readable_stream_locked)
+    * [FST_ERR_REP_ALREADY_SENT](#fst_err_rep_already_sent)
+    * [FST_ERR_REP_SENT_VALUE](#fst_err_rep_sent_value)
+    * [FST_ERR_SEND_INSIDE_ONERR](#fst_err_send_inside_onerr)
+    * [FST_ERR_SEND_UNDEFINED_ERR](#fst_err_send_undefined_err)
+    * [FST_ERR_BAD_STATUS_CODE](#fst_err_bad_status_code)
+    * [FST_ERR_BAD_TRAILER_NAME](#fst_err_bad_trailer_name)
+    * [FST_ERR_BAD_TRAILER_VALUE](#fst_err_bad_trailer_value)
+    * [FST_ERR_FAILED_ERROR_SERIALIZATION](#fst_err_failed_error_serialization)
+    * [FST_ERR_MISSING_SERIALIZATION_FN](#fst_err_missing_serialization_fn)
+    * [FST_ERR_MISSING_CONTENTTYPE_SERIALIZATION_FN](#fst_err_missing_contenttype_serialization_fn)
+    * [FST_ERR_REQ_INVALID_VALIDATION_INVOCATION](#fst_err_req_invalid_validation_invocation)
+    * [FST_ERR_SCH_MISSING_ID](#fst_err_sch_missing_id)
+    * [FST_ERR_SCH_ALREADY_PRESENT](#fst_err_sch_already_present)
+    * [FST_ERR_SCH_CONTENT_MISSING_SCHEMA](#fst_err_sch_content_missing_schema)
+    * [FST_ERR_SCH_DUPLICATE](#fst_err_sch_duplicate)
+    * [FST_ERR_SCH_VALIDATION_BUILD](#fst_err_sch_validation_build)
+    * [FST_ERR_SCH_SERIALIZATION_BUILD](#fst_err_sch_serialization_build)
+    * [FST_ERR_SCH_RESPONSE_SCHEMA_NOT_NESTED_2XX](#fst_err_sch_response_schema_not_nested_2xx)
+    * [FST_ERR_INIT_OPTS_INVALID](#fst_err_init_opts_invalid)
+    * [FST_ERR_FORCE_CLOSE_CONNECTIONS_IDLE_NOT_AVAILABLE](#fst_err_force_close_connections_idle_not_available)
+    * [FST_ERR_DUPLICATED_ROUTE](#fst_err_duplicated_route)
+    * [FST_ERR_BAD_URL](#fst_err_bad_url)
+    * [FST_ERR_ASYNC_CONSTRAINT](#fst_err_async_constraint)
+    * [FST_ERR_INVALID_URL](#fst_err_invalid_url)
+    * [FST_ERR_ROUTE_OPTIONS_NOT_OBJ](#fst_err_route_options_not_obj)
+    * [FST_ERR_ROUTE_DUPLICATED_HANDLER](#fst_err_route_duplicated_handler)
+    * [FST_ERR_ROUTE_HANDLER_NOT_FN](#fst_err_route_handler_not_fn)
+    * [FST_ERR_ROUTE_MISSING_HANDLER](#fst_err_route_missing_handler)
+    * [FST_ERR_ROUTE_METHOD_INVALID](#fst_err_route_method_invalid)
+    * [FST_ERR_ROUTE_METHOD_NOT_SUPPORTED](#fst_err_route_method_not_supported)
+    * [FST_ERR_ROUTE_BODY_VALIDATION_SCHEMA_NOT_SUPPORTED](#fst_err_route_body_validation_schema_not_supported)
+    * [FST_ERR_ROUTE_BODY_LIMIT_OPTION_NOT_INT](#fst_err_route_body_limit_option_not_int)
+    * [FST_ERR_HANDLER_TIMEOUT](#fst_err_handler_timeout)
+    * [FST_ERR_ROUTE_HANDLER_TIMEOUT_OPTION_NOT_INT](#fst_err_route_handler_timeout_option_not_int)
+    * [FST_ERR_ROUTE_REWRITE_NOT_STR](#fst_err_route_rewrite_not_str)
+    * [FST_ERR_REOPENED_CLOSE_SERVER](#fst_err_reopened_close_server)
+    * [FST_ERR_REOPENED_SERVER](#fst_err_reopened_server)
+    * [FST_ERR_PLUGIN_VERSION_MISMATCH](#fst_err_plugin_version_mismatch)

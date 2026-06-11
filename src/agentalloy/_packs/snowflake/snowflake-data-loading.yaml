@@ -1,0 +1,130 @@
+skill_type: domain
+skill_id: snowflake-data-loading
+canonical_name: Snowflake Data Loading — COPY INTO and Stages
+category: engineering
+skill_class: domain
+domain_tags:
+  - data loading
+  - snowflake
+  - copy into
+  - stages
+  - file formats
+always_apply: false
+phase_scope: [build]
+category_scope: [infrastructure]
+author: authoring-agent
+change_summary: 'initial authoring draft; merged 2026-06-03: Snowpipe overview moved to snowflake-snowpipe-auto-ingest'
+raw_prose: |
+  # Snowflake Data Loading — COPY INTO and Stages
+
+  ## Overview
+
+  Snowflake bulk-ingests data via COPY INTO commands from stages (external S3/GCS/Azure or internal user/table/named stages). Supports CSV, JSON, Parquet, Avro, ORC, and XML via FILE FORMAT objects. For continuous serverless ingestion triggered by cloud-storage events, see snowflake-snowpipe-auto-ingest.
+
+  Sourced from https://docs.snowflake.com/en/user-guide/data-load-overview.html.
+
+  > ## Documentation Index
+  > Fetch the complete documentation index at: https://docs.snowflake.com/llms.txt
+  > Use this file to discover all available pages before exploring further.
+
+  # Overview of data loading
+
+  This topic provides an overview of the main options available to load data into Snowflake.
+
+  To easily and accurately measure the ingestion latency of your data pipelines, use row timestamps. For more information, see [Use row timestamps to measure latency in your pipelines](data-engineering/row-timestamps.md).
+
+  ## Supported file locations
+
+  Snowflake refers to the location of data files in cloud storage as a *stage*.
+  The [COPY INTO <table>](../sql-reference/sql/copy-into-table.md) command used for bulk data loads supports
+  cloud storage accounts managed by your business entity (*external stages*) as well as cloud storage contained in your Snowflake account
+  (*internal stages*).
+
+  ### External stages
+
+  Loading data from any of the following cloud storage services is supported regardless of the [cloud platform](intro-cloud-platforms.md) that hosts your Snowflake account:
+
+  * Amazon S3
+  * Google Cloud Storage
+  * Microsoft Azure
+
+  You cannot access data held in archival cloud storage classes that requires restoration before it can be retrieved. These archival storage classes include, for example, the Amazon S3 Glacier Flexible Retrieval or Glacier Deep Archive storage class, or Microsoft Azure Archive Storage.
+
+  Upload (i.e. *stage*) files to your cloud storage account using the tools provided by the cloud storage service.
+
+  A named external stage is a database object created in a schema. This object stores the URL to files in cloud storage, the settings used to access the cloud storage account, and convenience settings such as the options that describe the format of staged files. Create stages using the [CREATE STAGE](../sql-reference/sql/create-stage.md) command.
+
+  > **Note:**
+  >
+  > Some data transfer billing charges may apply when loading data from files in a cloud storage service in a different region or cloud platform from your Snowflake account. For more information, see [Understanding data transfer cost](cost-understanding-data-transfer.md).
+
+  ### Internal stages
+
+  Snowflake maintains the following stage types in your account:
+
+  User:
+  :   A user stage is allocated to each user for storing files. This stage type is designed to store files that are staged and managed by a single user but can be loaded into multiple tables. User stages cannot be altered or dropped.
+
+  Table:
+  :   A table stage is available for each table created in Snowflake. This stage type is designed to store files that are staged and managed by one or more users but only loaded into a single table. Table stages cannot be altered or dropped.
+
+      Note that a table stage is not a separate database object; rather, it is an implicit stage tied to the table itself. A table stage has no grantable privileges of its own. To stage files to a table stage, list the files, query them on the stage, or drop them, you must be the table owner (have the role with the OWNERSHIP privilege on the table).
+
+  Named:
+  :   A named internal stage is a database object created in a schema. This stage type can store files that are staged and managed by one or more users and loaded into one or more tables. Because named stages are database objects, the ability to create, modify, use, or drop them can be controlled using security access control privileges. Create stages using the [CREATE STAGE](../sql-reference/sql/create-stage.md) command.
+
+  Upload files to any of the internal stage types from your local file system using the [PUT](../sql-reference/sql/put.md) command.
+
+fragments:
+  - fragment_type: setup
+    sequence: 1
+    content: |
+      Snowflake's bulk ingestion path is the COPY INTO command, which loads batched files from internal or external stages into a target table. COPY INTO supports CSV, JSON, Parquet, Avro, ORC, and XML via FILE FORMAT objects. This skill scopes to bulk COPY INTO and stage management; for continuous serverless ingestion via cloud-storage events, see `snowflake-snowpipe-auto-ingest`.
+
+      Sourced from https://docs.snowflake.com/en/user-guide/data-load-overview.html.
+  - fragment_type: execution
+    sequence: 2
+    content: |
+      To easily and accurately measure the ingestion latency of your data pipelines, use row timestamps. For more information, see [Use row timestamps to measure latency in your pipelines](data-engineering/row-timestamps.md).
+  - fragment_type: setup
+    sequence: 3
+    content: |
+      Snowflake refers to the location of data files in cloud storage as a *stage*.
+      The [COPY INTO <table>](../sql-reference/sql/copy-into-table.md) command used for bulk data loads supports
+      cloud storage accounts managed by your business entity (*external stages*) as well as cloud storage contained in your Snowflake account
+      (*internal stages*).
+
+      Loading data from any of the following cloud storage services is supported regardless of the [cloud platform](intro-cloud-platforms.md) that hosts your Snowflake account:
+
+      * Amazon S3
+      * Google Cloud Storage
+      * Microsoft Azure
+
+      You cannot access data held in archival cloud storage classes that requires restoration before it can be retrieved. These archival storage classes include, for example, the Amazon S3 Glacier Flexible Retrieval or Glacier Deep Archive storage class, or Microsoft Azure Archive Storage.
+
+      Upload (i.e. *stage*) files to your cloud storage account using the tools provided by the cloud storage service.
+  - fragment_type: setup
+    sequence: 4
+    content: |
+      A named external stage is a database object created in a schema. This object stores the URL to files in cloud storage, the settings used to access the cloud storage account, and convenience settings such as the options that describe the format of staged files. Create stages using the [CREATE STAGE](../sql-reference/sql/create-stage.md) command.
+
+      Some data transfer billing charges may apply when loading data from files in a cloud storage service in a different region or cloud platform from your Snowflake account. For more information, see [Understanding data transfer cost](cost-understanding-data-transfer.md).
+  - fragment_type: setup
+    sequence: 5
+    content: |
+      Snowflake maintains the following stage types in your account:
+
+      User:
+      :   A user stage is allocated to each user for storing files. This stage type is designed to store files that are staged and managed by a single user but can be loaded into multiple tables. User stages cannot be altered or dropped.
+
+      Table:
+      :   A table stage is available for each table created in Snowflake. This stage type is designed to store files that are staged and managed by one or more users but only loaded into a single table. Table stages cannot be altered or dropped.
+
+          Note that a table stage is not a separate database object; rather, it is an implicit stage tied to the table itself. A table stage has no grantable privileges of its own. To stage files to a table stage, list the files, query them on the stage, or drop them, you must be the table owner (have the role with the OWNERSHIP privilege on the table).
+
+      Named:
+      :   A named internal stage is a database object created in a schema. This stage type can store files that are staged and managed by one or more users and loaded into one or more tables. Because named stages are database objects, the ability to create, modify, use, or drop them can be controlled using security access control privileges. Create stages using the [CREATE STAGE](../sql-reference/sql/create-stage.md) command.
+  - fragment_type: setup
+    sequence: 6
+    content: |
+      Upload files to any of the internal stage types from your local file system using the [PUT](../sql-reference/sql/put.md) command.
