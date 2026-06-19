@@ -151,6 +151,10 @@ class TestHandleLlamaServer:
         with (
             patch("shutil.which", return_value="/usr/local/bin/llama-server"),
             patch(
+                "agentalloy.install.subcommands.pull_models._llama_server_runs",
+                return_value=True,
+            ),
+            patch(
                 "agentalloy.install.subcommands.pull_models._is_model_present_llama_server",
                 return_value=True,
             ),
@@ -165,6 +169,10 @@ class TestHandleLlamaServer:
         """Binary on PATH + GGUF missing → download and record the pull."""
         with (
             patch("shutil.which", return_value="/usr/local/bin/llama-server"),
+            patch(
+                "agentalloy.install.subcommands.pull_models._llama_server_runs",
+                return_value=True,
+            ),
             patch(
                 "agentalloy.install.subcommands.pull_models._is_model_present_llama_server",
                 return_value=False,
@@ -183,6 +191,10 @@ class TestHandleLlamaServer:
     def test_download_failure_surfaces_error(self) -> None:
         with (
             patch("shutil.which", return_value="/usr/local/bin/llama-server"),
+            patch(
+                "agentalloy.install.subcommands.pull_models._llama_server_runs",
+                return_value=True,
+            ),
             patch(
                 "agentalloy.install.subcommands.pull_models._is_model_present_llama_server",
                 return_value=False,
@@ -270,6 +282,28 @@ class TestHandleLlamaServer:
 
 
 class TestPullModels:
+    @pytest.fixture(autouse=True)
+    def _stub_llama_binary(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # These tests exercise the pull *orchestration* (state recording, exit
+        # codes), not binary provisioning. Stub the binary step so they don't do
+        # a real probe/prebuilt-download — slow, network-bound, and racy under
+        # -n auto (concurrent downloads collide). Binary provisioning is covered
+        # by TestEnsureLlamaServerBinary / TestHandleLlamaServer.
+        import shutil
+
+        real_which = shutil.which
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name, *a, **k: (
+                "/usr/bin/llama-server" if name == "llama-server" else real_which(name, *a, **k)
+            ),
+        )
+        monkeypatch.setattr(
+            "agentalloy.install.subcommands.pull_models._llama_server_runs",
+            lambda *a, **k: True,
+        )
+
     def test_pulls_embed_model(self, repo_root: Path) -> None:
         models = _recommend_output()
 
@@ -441,6 +475,25 @@ class TestPullModels:
 class TestRunExitCodes:
     """``_run`` exit codes: 0 = work done, 4 = no-op, 1 = error."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_llama_binary(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Orchestration/exit-code tests: stub binary provisioning (see
+        # TestPullModels._stub_llama_binary) so no real probe/download runs.
+        import shutil
+
+        real_which = shutil.which
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name, *a, **k: (
+                "/usr/bin/llama-server" if name == "llama-server" else real_which(name, *a, **k)
+            ),
+        )
+        monkeypatch.setattr(
+            "agentalloy.install.subcommands.pull_models._llama_server_runs",
+            lambda *a, **k: True,
+        )
+
     def _models_file(self, repo_root: Path, runner: str = "llama-server") -> Path:
         import json as _json
 
@@ -534,6 +587,10 @@ class TestEnsureLlamaServerBinary:
     def test_uses_binary_on_path(self) -> None:
         with (
             patch("shutil.which", return_value="/usr/bin/llama-server"),
+            patch(
+                "agentalloy.install.subcommands.pull_models._llama_server_runs",
+                return_value=True,
+            ),
             patch(
                 "agentalloy.install.subcommands.pull_models._llama_server_runs",
                 return_value=True,
