@@ -9,13 +9,22 @@ from user-scope state.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 from pathlib import Path
 from typing import Any
 
 from agentalloy.install import state as install_state
 from agentalloy.install.output import add_json_flag, print_rich, write_result
-from agentalloy.install.subcommands.wire_harness import VALID_HARNESSES, wire_harness
+from agentalloy.install.subcommands.wire_harness import (
+    SENTINEL_BEGIN,
+    SENTINEL_END,
+    VALID_HARNESSES,
+    wire_harness,
+)
+from agentalloy.providers.base import WireRecord
+from agentalloy.signals.skill_loader import LIFECYCLE_MODES
 
 # Harnesses that default to hook wiring (graceful degradation) rather than
 # proxy wiring (a down service breaks the harness). Only claude-code today.
@@ -116,6 +125,28 @@ def add_parser(
         action="store_true",
         help="Overwrite an edited sentinel block (otherwise refuses).",
     )
+    p.add_argument(
+        "--lifecycle-mode",
+        choices=LIFECYCLE_MODES,
+        default=None,
+        help=(
+            "How AgentAlloy behaves in this repo. 'full' (default): intake + "
+            "phase lifecycle. 'assist': defer to your own workflow — no intake "
+            "front-door, keep skill suggestions. 'off': wire but inject nothing. "
+            "When omitted and the repo already defines its own agents/commands, "
+            "you're prompted (TTY only); non-interactive runs default to 'full'."
+        ),
+    )
+    p.add_argument(
+        "--clean-room",
+        action="store_true",
+        help=(
+            "Claude Code only: also exclude your global ~/.claude/CLAUDE.md from "
+            "THIS repo (writes claudeMdExcludes into .claude/settings.json). "
+            "Off by default — this suppresses ALL your global directives here, "
+            "not just conflicting ones."
+        ),
+    )
     add_json_flag(p)
     p.set_defaults(func=_run)
 
@@ -203,7 +234,213 @@ def _render_human(result: dict[str, Any]) -> None:
             f"  Phase: [bold]{phase_seeded}[/bold] [dim](repo activated; composes next prompt)[/dim]"
         )
 
+    detected = result.get("custom_workflow_detected")
+    if detected:
+        print_rich(f"  [dim]Detected your own workflow: {', '.join(detected)}[/dim]")
+
+    mode = result.get("lifecycle_mode")
+    if mode and mode != "full":
+        note = (
+            "defers to your workflow; keeps skill suggestions"
+            if mode == "assist"
+            else "wired, injection muted"
+        )
+        print_rich(f"  Lifecycle: [bold]{mode}[/bold] [dim]({note})[/dim]")
+
+    if result.get("soft_precedence_note"):
+        print_rich("  [dim].claude/CLAUDE.md note added (repo workflow loads last)[/dim]")
+
+    if result.get("clean_room_excludes"):
+        print_rich(
+            "  [yellow]Clean-room:[/yellow] global ~/.claude/CLAUDE.md excluded from this repo "
+            "[dim](suppresses ALL global directives here, not just conflicting ones)[/dim]"
+        )
+
     print_rich()
+
+
+def _detect_custom_workflow(root: Path) -> list[str]:
+    """Return human-readable signals that *root* already defines its own agent
+    workflow, so wiring can offer to defer rather than impose the lifecycle.
+
+    Checks the Claude Code subagent/command locations plus the cross-harness
+    ``AGENTS.md`` convention. Glob-only and never raises — an empty list means
+    nothing was detected (wiring then defaults to ``full``).
+    """
+    signals: list[str] = []
+    try:
+        agents = sorted((root / ".claude" / "agents").glob("*.md"))
+        if agents:
+            signals.append(f".claude/agents/ ({len(agents)})")
+        commands = sorted((root / ".claude" / "commands").glob("*.md"))
+        if commands:
+            signals.append(f".claude/commands/ ({len(commands)})")
+        if (root / "AGENTS.md").is_file():
+            signals.append("AGENTS.md")
+    except OSError:
+        return []
+    return signals
+
+
+def _prompt_lifecycle_mode(detected: list[str]) -> str:
+    """Interactive numbered choice for the per-repo lifecycle mode.
+
+    Only invoked when custom-workflow signals are detected AND stdin is a TTY.
+    Mirrors the numbered-choice prompt pattern used elsewhere in the installer;
+    EOF/interrupt or a blank line takes the default (``assist``).
+    """
+    options: list[tuple[str, str]] = [
+        ("assist", "assist — defer to your workflow (no intake interview); keep skill suggestions"),
+        ("full", "full — run AgentAlloy's intake + phase lifecycle"),
+        ("off", "off — wire the proxy/hooks but inject nothing"),
+    ]
+    print(
+        f"\nThis repo already defines its own agent workflow ({', '.join(detected)}).",
+        file=sys.stderr,
+    )
+    print("How should AgentAlloy behave here?", file=sys.stderr)
+    for i, (_, label) in enumerate(options, 1):
+        print(f"  {i}. {label}", file=sys.stderr)
+    print(file=sys.stderr)
+    while True:
+        try:
+            raw = input(f"Choice [1-{len(options)}] (default 1): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print(file=sys.stderr)
+            return options[0][0]
+        if raw == "":
+            return options[0][0]
+        if raw.isdigit() and 1 <= int(raw) <= len(options):
+            return options[int(raw) - 1][0]
+        print(f"  Please enter a number between 1 and {len(options)}.", file=sys.stderr)
+
+
+def _resolve_lifecycle_mode(args: argparse.Namespace, cwd: Path) -> tuple[str, list[str]]:
+    """Resolve the effective lifecycle mode and the detection signals.
+
+    Precedence: an explicit ``--lifecycle-mode`` flag always wins; otherwise,
+    if the repo has its own workflow AND we're on a TTY, prompt; otherwise
+    default ``full`` (preserving historical behavior for non-interactive runs
+    and repos with no detected customization).
+    """
+    flag = getattr(args, "lifecycle_mode", None)
+    detected = _detect_custom_workflow(cwd)
+    if flag is not None:
+        return flag, detected
+    if detected and sys.stdin.isatty():
+        return _prompt_lifecycle_mode(detected), detected
+    return "full", detected
+
+
+# ---------------------------------------------------------------------------
+# Repo-local instruction shaping (claude-code): soft-precedence note + clean-room
+# ---------------------------------------------------------------------------
+
+# Loaded last by Claude Code (project memory), so it nudges — softly, by weight,
+# not by enforcement — the lifecycle ahead of conflicting global directives. We
+# own the file outright (a dedicated `./.claude/CLAUDE.md`), alongside any
+# user-authored `./CLAUDE.md`, which still loads.
+_SOFT_NOTE_INNER = (
+    "**AgentAlloy is active in this repo.** It composes just-in-time skills and "
+    "drives a spec→ship workflow through hooks. Where this repo's workflow "
+    "guidance conflicts with global/user-level directives, prefer the repo "
+    "workflow here. Managed by AgentAlloy — edits inside these markers are "
+    "overwritten on re-wire."
+)
+
+
+def _sha256(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _write_soft_precedence_note(root: Path) -> WireRecord | None:
+    """Write a dedicated `./.claude/CLAUDE.md` soft-precedence note (full mode).
+
+    We only ever own this file when it is absent or already carries our sentinel
+    — a user-authored `./.claude/CLAUDE.md` is left untouched (returns None). As
+    a dedicated file the unwire is trivial: ``wrote_new_file`` → deleted.
+    """
+    path = root / ".claude" / "CLAUDE.md"
+    if path.exists() and SENTINEL_BEGIN not in path.read_text(encoding="utf-8"):
+        return None  # user owns this file — don't clobber it
+    block = f"{SENTINEL_BEGIN}\n{_SOFT_NOTE_INNER}\n{SENTINEL_END}\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(block, encoding="utf-8")
+    return WireRecord(
+        path=str(path),
+        action="wrote_new_file",
+        content_sha256=_sha256(block),
+        original_content=None,
+        marker_key="agentalloy.soft-precedence-note",
+    )
+
+
+def _write_clean_room_excludes(root: Path) -> WireRecord | None:
+    """Opt-in: add the global ~/.claude/CLAUDE.md to this repo's claudeMdExcludes.
+
+    Merges into `./.claude/settings.json`, preserving any existing keys and
+    excludes. Returns None if the file exists but isn't a JSON object (we won't
+    stomp something we can't safely merge). unwire restores the captured
+    original (or deletes the file if we created it).
+    """
+    settings = root / ".claude" / "settings.json"
+    global_md = str(Path.home() / ".claude" / "CLAUDE.md")
+    if settings.exists():
+        original: str | None = settings.read_text(encoding="utf-8")
+        try:
+            data: Any = json.loads(original)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+    else:
+        original = None
+        data = {}
+    existing = data.get("claudeMdExcludes")
+    excludes: list[Any] = list(existing) if isinstance(existing, list) else []
+    if global_md not in excludes:
+        excludes.append(global_md)
+    data["claudeMdExcludes"] = excludes
+    serialized = json.dumps(data, indent=2) + "\n"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(serialized, encoding="utf-8")
+    return WireRecord(
+        path=str(settings),
+        action="wrote_new_file" if original is None else "injected_block",
+        content_sha256=_sha256(serialized),
+        original_content=original,
+        marker_key="agentalloy.clean-room-excludes",
+    )
+
+
+def _persist_extra_records(root: Path, harness: str, records: list[WireRecord]) -> None:
+    """Merge extra wire records into install-state so unwire reverses them.
+
+    Mirrors ``apply_hook_wiring``'s merge, but preserves the prior entry's
+    *original_content and action* across re-wires — the FIRST wire captured the
+    true pre-install state; a re-wire re-reads our own block and must not let
+    that masquerade as the original (which would leave the block behind).
+    """
+    if not records:
+        return
+    entries: list[dict[str, Any]] = []
+    for rec in records:
+        entry = rec.to_dict()
+        entry.setdefault("harness", harness)
+        entry.setdefault("repo_root", str(root))
+        entries.append(entry)
+    st = install_state.load_state(root)
+    prior = st.get("harness_files_written") or []
+    prior_by_path = {e.get("path"): e for e in prior}
+    new_paths = {e.get("path") for e in entries}
+    for entry in entries:
+        prior_entry = prior_by_path.get(entry.get("path"))
+        if prior_entry is not None:
+            entry["original_content"] = prior_entry.get("original_content")
+            entry["action"] = prior_entry.get("action", entry["action"])
+    merged = [e for e in prior if e.get("path") not in new_paths] + entries
+    st["harness_files_written"] = merged
+    install_state.save_state(st, root)
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -232,13 +469,46 @@ def _run(args: argparse.Namespace) -> int:
     else:
         result = wire_harness(harness, port=port, root=cwd, force=args.force)
 
-    # Activate this repo: seed the entry phase so composition engages on the
-    # next prompt. Without a phase file, both the hook and proxy paths
-    # short-circuit and the repo stays inert (the "wired but nothing happens"
-    # trap). Create-only — an already-phased repo is left untouched.
-    phase_seeded = _seed_entry_phase(cwd)
-    if phase_seeded:
-        result["phase_seeded"] = phase_seeded
+    # Resolve and persist the per-repo lifecycle mode the hooks read on every
+    # event. `assist`/`off` let a repo with its own agents/workflows opt out of
+    # the intake front-door and phase forcing (the collision this guards).
+    from agentalloy.signals.skill_loader import _write_lifecycle_mode
+
+    mode, detected = _resolve_lifecycle_mode(args, cwd)
+    _write_lifecycle_mode(cwd, mode)
+    result["lifecycle_mode"] = mode
+    if detected:
+        result["custom_workflow_detected"] = detected
+
+    if mode == "full":
+        # Activate this repo: seed the entry phase so composition engages on the
+        # next prompt. Without a phase file, both the hook and proxy paths
+        # short-circuit and the repo stays inert (the "wired but nothing happens"
+        # trap). Create-only — an already-phased repo is left untouched.
+        phase_seeded = _seed_entry_phase(cwd)
+        if phase_seeded:
+            result["phase_seeded"] = phase_seeded
+    else:
+        # assist/off must NOT seed a phase (a seeded `intake` re-arms the front
+        # door). Still git-exclude `.agentalloy/` — the config file lives there.
+        _git_exclude_agentalloy(cwd)
+
+    # Repo-local instruction shaping (claude-code only). Best-effort — wiring
+    # already succeeded, so never fail it over these. 1b soft note is full-only
+    # (AgentAlloy driving); 1c clean-room is opt-in via --clean-room.
+    extra: list[WireRecord] = []
+    if harness == "claude-code":
+        if mode == "full":
+            note = _write_soft_precedence_note(cwd)
+            if note is not None:
+                extra.append(note)
+                result["soft_precedence_note"] = note.path
+        if getattr(args, "clean_room", False):
+            cr = _write_clean_room_excludes(cwd)
+            if cr is not None:
+                extra.append(cr)
+                result["clean_room_excludes"] = cr.path
+    _persist_extra_records(cwd, harness, extra)
 
     # Restore data (original_content) is already persisted to install-state.json
     # by the wiring functions above; strip it from the command output so a prior
