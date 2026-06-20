@@ -89,17 +89,39 @@ class ProjectDir:
         return p
 
     def write_design(self, slug: str) -> Path:
-        d = self.root / "docs" / "design"
+        # Design fans out into a per-slug folder: approach.md + tasks.md are the
+        # two gated files (plus component files as the work needs).
+        d = self.root / "docs" / "design" / slug
         d.mkdir(parents=True, exist_ok=True)
-        p = d / f"{slug}.md"
-        p.write_text("# Design\n\n## Module Layout\n\nmain.py, db.py, auth.py\n")
-        return p
+        (d / "approach.md").write_text(
+            "# Design\n\n## Approach\n\nmodule layout: main.py, db.py, auth.py\n"
+        )
+        (d / "tasks.md").write_text(
+            "# Tasks\n\n## Tasks\n\n- T1: schema (satisfies AC-1)\n- T2: API (satisfies AC-2)\n"
+        )
+        (d / "test-plan.md").write_text(
+            "# Test Plan\n\n## Test Cases\n\n"
+            "- TC1: POST /links creates a link -> 201 (proves AC-1, task T1)\n"
+            "- TC2: GET /links lists links (proves AC-2, task T2)\n"
+        )
+        return d
 
     def write_build(self) -> None:
         (self.root / "src").mkdir(parents=True, exist_ok=True)
         (self.root / "src" / "app.py").write_text("def app():\n    return 1\n")
         (self.root / "tests").mkdir(parents=True, exist_ok=True)
         (self.root / "tests" / "test_app.py").write_text("def test_app():\n    assert True\n")
+
+    def write_qa(self, slug: str) -> Path:
+        d = self.root / "docs" / "qa"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"{slug}.md"
+        p.write_text(
+            "# QA\n\n"
+            "## Checks\n\nsuite green, lint clean, types clean\n\n"
+            "## Review\n\nAC-1/AC-2 met; non-goals respected; no Critical findings\n"
+        )
+        return p
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +255,8 @@ def test_full_lifecycle_walk(app_client, project: ProjectDir, intent_oracle: _In
     r = _ups(client, project, "implementation done; run qa")
     assert r["transition"] is True and r["to_phase"] == "qa"
 
-    # qa -> ship: tests/**/*.py present.
+    # qa -> ship: docs/qa/<slug>.md with Checks + Review.
+    project.write_qa(slug)
     r = _ups(client, project, "tests pass — ship it")
     assert r["transition"] is True and r["to_phase"] == "ship"
     assert project.read_phase() == "phase: ship"
