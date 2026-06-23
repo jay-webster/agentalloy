@@ -58,6 +58,7 @@ except ImportError:
 from agentalloy.install.subcommands.container_runtime import (  # noqa: PLC0415, F401
     _check_container_running,  # noqa: F401  # pyright: ignore[reportUnusedImport]
     _cleanup_temp_entrypoint,  # noqa: F401
+    _detect_functional_runtimes,  # noqa: F401
     _detect_runtime_binary,  # noqa: F401
     _ensure_volume,  # noqa: F401
     _generate_entrypoint,  # noqa: F401
@@ -244,6 +245,12 @@ _HW_LABELS: dict[str, str] = {
 # hardware difference is handled via -ngl at server start, not preset env).
 _VALID_PRESETS = frozenset(_HW_LABELS)
 
+# Internal sentinel returned by _run_container_flow when the user, faced with a
+# missing/unusable container runtime, opts to fall back to a native install.
+# run_setup intercepts it and continues the native flow; it is never returned
+# to the OS as an exit code.
+_SWITCH_TO_NATIVE = -99
+
 
 def _resolve_preset(cfg: SetupConfig) -> str:
     """Resolve the write-env preset from the hardware target.
@@ -425,22 +432,47 @@ def _prompt_harness() -> str:
 
 
 def _prompt_deployment() -> str:
-    """Prompt for deployment type: native or container.
+    """Prompt for deployment type: container or native.
 
-    Default is "container" (index 2) as it is the recommended option
-    for new installs.
+    Container is listed first (option 1) and is the default, as it is the
+    recommended option for new installs.
     """
     return _prompt_numbered(
         "Select deployment type:",
         [
-            ("native", "Native  — runs directly on this host (systemd or manual)"),
             (
                 "container",
                 "Container — single container pulled from GHCR (recommended for new installs)",
             ),
+            ("native", "Native  — runs directly on this host (systemd or manual)"),
         ],
-        default_index=2,
+        default_index=1,
     )
+
+
+def _offer_switch_to_native(cfg: SetupConfig) -> bool:
+    """Ask whether to fall back to a native install when no container runtime is
+    usable. Interactive only — non-interactive runs keep the fail-fast behavior.
+
+    Returns True if the user opts to switch to native.
+    """
+    # Match the other prompt helpers: never block on input when there's no TTY,
+    # even if --non-interactive wasn't passed (piped stdin / CI). A bare input()
+    # there would raise EOFError and abort setup with a traceback.
+    if cfg.non_interactive or not sys.stdin.isatty():
+        return False
+    try:
+        ans = (
+            input(
+                "  Install a container runtime (Docker or Podman) and re-run, or switch "
+                "to a native install now? [switch to native: y / N]: "
+            )
+            .strip()
+            .lower()
+        )
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return ans in ("y", "yes")
 
 
 def _discover_packs() -> dict[str, dict[str, Any]]:
@@ -1079,19 +1111,59 @@ def _run_container_flow(cfg: SetupConfig, t0: float) -> int:
     # NOTE: container_runtime helpers are already imported at module level
     # (lines 54-67) so tests can mock them — no need to re-import here.
 
-    label = _detect_runtime_binary()
-    if label is None:
-        _print(
-            "  [red]Neither `podman` nor `docker` found on PATH.[/red]\n"
-            "  Install Podman (recommended) or Docker:\n"
-            "    Linux:   sudo apt install podman\n"
-            "    macOS:   brew install podman\n"
-            "  Verify:  podman --version"
+    requested = cfg.runtime_binary  # explicit --runtime flag, or "" for auto
+    functional = _detect_functional_runtimes()
+    if requested:
+        # An explicit choice is strict: don't silently substitute another runtime.
+        if requested in functional:
+            label = requested
+        elif shutil.which(requested) is None:
+            _print(
+                f"  [red]--runtime {requested} requested but `{requested}` is not on "
+                f"PATH.[/red]\n  Install it, or drop --runtime to auto-detect."
+            )
+            return _SWITCH_TO_NATIVE if _offer_switch_to_native(cfg) else 1
+        else:
+            _print(
+                f"  [red]--runtime {requested} requested but `{requested}` is not "
+                f"responding.[/red]\n  Start its daemon/machine and re-run setup:\n"
+                "    Podman:  podman machine start\n"
+                "    Docker:  start Docker Desktop (macOS) or "
+                "`sudo systemctl start docker` (Linux)"
+            )
+            return _SWITCH_TO_NATIVE if _offer_switch_to_native(cfg) else 1
+    elif not functional:
+        present = _detect_runtime_binary()  # present-but-non-functional, or None
+        if present is None:
+            _print(
+                "  [red]Container deployment needs a container runtime, but neither "
+                "`podman` nor `docker` was found on PATH.[/red]\n"
+                "  Install one (then re-run setup):\n"
+                "    Podman:  brew install podman  (macOS) / sudo apt install podman (Linux)\n"
+                "    Docker:  https://docs.docker.com/get-docker/"
+            )
+        else:
+            _print(
+                f"  [red]`{present}` is installed but not responding.[/red]\n"
+                "  Start its daemon/machine, then re-run setup:\n"
+                "    Podman:  podman machine start\n"
+                "    Docker:  start Docker Desktop (macOS) or "
+                "`sudo systemctl start docker` (Linux)"
+            )
+        return _SWITCH_TO_NATIVE if _offer_switch_to_native(cfg) else 1
+    elif len(functional) == 1:
+        label = functional[0]
+    else:
+        # More than one runtime works — let the user pick. On a non-TTY this
+        # returns the default (podman, the preferred runtime) without prompting.
+        label = _prompt_numbered(
+            "Multiple container runtimes detected — choose one:",
+            [(rt, {"podman": "Podman", "docker": "Docker"}[rt]) for rt in functional],
+            default_index=1,
         )
-        return 1
     binary_path = shutil.which(label)
     assert binary_path is not None, (
-        f"{label} not found on PATH despite _detect_runtime_binary returning it"
+        f"{label} not found on PATH despite functional-runtime detection returning it"
     )
     cfg.runtime_binary = label
     _print(f"  Runtime binary: {label} at {binary_path}")
@@ -1618,7 +1690,15 @@ def run_setup(cfg: SetupConfig) -> int:
         cfg.deployment = "native"  # non-interactive default
 
     if cfg.deployment == "container":
-        return _run_container_flow(cfg, t0)
+        rc = _run_container_flow(cfg, t0)
+        if rc != _SWITCH_TO_NATIVE:
+            return rc
+        # No usable container runtime — user chose to fall back to native.
+        # cfg is untouched at this point (the switch happens before any
+        # container-specific overrides), so continue into the native flow.
+        cfg.deployment = "native"
+        cfg.runtime_binary = ""
+        _print("\n  [yellow]Switching to a native install.[/yellow]")
 
     # -- Phase 1: Gather config --
 
@@ -2165,6 +2245,15 @@ def add_parser(
         help="Deployment type (default: native for non-interactive, prompted interactively).",
     )
     p.add_argument(
+        "--runtime",
+        choices=["podman", "docker"],
+        default=None,
+        help=(
+            "Container runtime to use (default: auto-detect; podman preferred when both work). "
+            "Use this to choose docker non-interactively when both are installed."
+        ),
+    )
+    p.add_argument(
         "--image-tag",
         choices=["latest", "full"],
         default="latest",
@@ -2208,6 +2297,7 @@ def _run_from_args(args: argparse.Namespace) -> int:
         harness=args.harness or "manual",
         hardware_target=getattr(args, "hardware", None) or "",
         deployment=getattr(args, "deployment", None) or "",
+        runtime_binary=getattr(args, "runtime", None) or "",
         non_interactive=args.non_interactive,
         force=getattr(args, "force", False),
         acknowledge_sidecar=getattr(args, "acknowledge_sidecar", False),
