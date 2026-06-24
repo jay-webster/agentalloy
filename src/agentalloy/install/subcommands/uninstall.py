@@ -871,6 +871,20 @@ def uninstall(
         ".openclaw/plugins.json",  # openclaw plugin config
     )
     root_resolved = root.resolve()
+    # Trusted user-scope prefixes, resolved. A prefix that is itself a symlink
+    # escaping HOME is UNtrusted — it could redirect a deletion to an arbitrary file
+    # (e.g. ~/.agentalloy -> /etc), and `is_inside_root` resolves the prefix too, so
+    # the membership check alone would accept it. Keep only prefixes whose resolved
+    # target stays within HOME; the per-entry symlink-escape guard then requires a
+    # user-scope path to resolve inside one of these.
+    home_resolved = home.resolve()
+    safe_user_prefixes_resolved: list[Path] = []
+    for prefix in allowed_user_prefixes:
+        if not prefix.exists():
+            continue
+        prefix_resolved = prefix.resolve()
+        if prefix_resolved == home_resolved or home_resolved in prefix_resolved.parents:
+            safe_user_prefixes_resolved.append(prefix_resolved)
     # Iterate over harness entries only when wiring removal is enabled.
     # Typed binding preserves `entry: dict[str, Any]` for pyright across
     # the loop body — using an inline conditional iterable degrades the
@@ -904,14 +918,29 @@ def uninstall(
         #     suffix allowlist is the trust anchor that prevents a tampered
         #     `{path: "/etc/shadow", repo_root: "/etc"}` from passing.
         path_inside_cwd_repo = install_state.is_inside_root(path, root)
-        path_inside_user = any(
+        path_inside_user_scope = any(
             install_state.is_inside_root(path, p) for p in allowed_user_prefixes if p.exists()
         )
-        path_inside_entry_repo = False
         entry_repo_root_str = entry.get("repo_root")
         entry_repo_root: Path | None = None
-        if all_repos and isinstance(entry_repo_root_str, str) and entry_repo_root_str:
+        entry_belongs_to_cwd_repo = False
+        if isinstance(entry_repo_root_str, str) and entry_repo_root_str:
             entry_repo_root = Path(entry_repo_root_str)
+            try:
+                entry_belongs_to_cwd_repo = entry_repo_root.resolve() == root_resolved
+            except OSError:
+                entry_belongs_to_cwd_repo = False
+        # A user-scope harness file (~/.claude, ~/.agentalloy, ...) is SHARED across
+        # repos. On a per-repo unwire (all_repos=False) it is only ours to remove when
+        # this entry was recorded for the current repo — otherwise removing it would
+        # unwire other repos that share the same user-scope config. A full teardown
+        # (all_repos=True) removes it regardless.
+        path_inside_user = path_inside_user_scope and (all_repos or entry_belongs_to_cwd_repo)
+        # When crossing repos (all_repos=True) the entry's own recorded repo_root is
+        # also a trusted bound — revalidated against the suffix allowlist above and the
+        # symlink-escape check below.
+        path_inside_entry_repo = False
+        if all_repos and entry_repo_root is not None:
             path_inside_entry_repo = install_state.is_inside_root(path, entry_repo_root)
         if not (path_inside_cwd_repo or path_inside_user or path_inside_entry_repo):
             # Entry belongs to a different repo and we're not authorized to
@@ -939,6 +968,23 @@ def uninstall(
                         f"Skipping harness entry that escapes its repo root via symlink: {raw_path}"
                     )
                     continue
+            # User-scope paths get the same defense, but only when user-scope is their
+            # SOLE claim to trust — a path also inside the cwd/entry repo was already
+            # validated above. The resolved path must land inside a trusted
+            # (home-contained) user prefix; this rejects both a path that symlinks out
+            # of its prefix AND a prefix that is itself a symlink escaping HOME (excluded
+            # from `safe_user_prefixes_resolved` above).
+            user_scope_only = path_inside_user and not (
+                path_inside_cwd_repo or path_inside_entry_repo
+            )
+            if user_scope_only and not any(
+                str(resolved).startswith(str(rp)) for rp in safe_user_prefixes_resolved
+            ):
+                warnings.append(
+                    f"Skipping harness entry that escapes its user-scope prefix via symlink: "
+                    f"{raw_path}"
+                )
+                continue
         except OSError:
             warnings.append(f"Cannot resolve harness path: {raw_path}")
             continue

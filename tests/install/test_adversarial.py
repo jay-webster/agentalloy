@@ -338,3 +338,176 @@ class TestMcpHostileInput:
             resp = mcp_server._process_message(msg, port=8000)  # pyright: ignore[reportPrivateUsage]
         assert resp is not None
         assert resp["error"]["code"] == mcp_server.INTERNAL_ERROR
+
+
+# ---------------------------------------------------------------------------
+# unwire per-repo scoping: one repo's unwire must not unwire the others
+# ---------------------------------------------------------------------------
+
+
+class TestUnwirePerRepoScoping:
+    """`unwire` (all_repos=False) removes a SHARED user-scope harness config only when
+    it was recorded for the CURRENT repo; `--all` (all_repos=True) removes it
+    regardless. Guards the 'unwiring one repo unwires them all' bug."""
+
+    def _seed_user_scope_entry(self, home: Path, cwd_repo: Path, recorded_repo_root: str) -> Path:
+        # A shared user-scope harness file (~/.agentalloy/claude-code-env.sh), recorded
+        # in state as belonging to `recorded_repo_root`.
+        f = home / ".agentalloy" / "claude-code-env.sh"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("export ANTHROPIC_BASE_URL=http://localhost:47950/proj/TOKEN\n")
+        cwd_repo.mkdir(parents=True, exist_ok=True)
+        (cwd_repo / "pyproject.toml").write_text("")
+        st = install_state.load_state(cwd_repo)
+        st["harness_files_written"] = [
+            {
+                "path": str(f),
+                "repo_root": recorded_repo_root,
+                "action": "wrote_new_file",
+                "harness": "claude-code",
+                "sentinel_begin": None,
+                "sentinel_end": None,
+                "content_sha256": "abc",
+            }
+        ]
+        install_state.save_state(st, cwd_repo)
+        return f
+
+    def _unwire(self, root: Path, *, all_repos: bool) -> None:
+        from agentalloy.install.subcommands.uninstall import uninstall
+
+        uninstall(
+            force=True,
+            root=root,
+            all_repos=all_repos,
+            remove_user_state=False,
+            remove_env=False,
+            stop_services=False,
+            remove_models=False,
+            remove_wiring=True,
+        )
+
+    def test_per_repo_unwire_spares_other_repos_user_scope(
+        self, tmp_path: Path, _fake_home_for_wiring: Path
+    ) -> None:
+        home = _fake_home_for_wiring
+        cwd_repo = tmp_path / "repoA"
+        f = self._seed_user_scope_entry(home, cwd_repo, recorded_repo_root=str(tmp_path / "repoB"))
+        self._unwire(cwd_repo, all_repos=False)
+        assert f.exists(), "per-repo unwire must not remove a user-scope config owned by repoB"
+
+    def test_per_repo_unwire_removes_own_user_scope(
+        self, tmp_path: Path, _fake_home_for_wiring: Path
+    ) -> None:
+        home = _fake_home_for_wiring
+        cwd_repo = tmp_path / "repoA"
+        f = self._seed_user_scope_entry(home, cwd_repo, recorded_repo_root=str(cwd_repo))
+        self._unwire(cwd_repo, all_repos=False)
+        assert not f.exists(), "per-repo unwire must remove THIS repo's own user-scope config"
+
+    def test_all_flag_removes_user_scope_regardless_of_repo(
+        self, tmp_path: Path, _fake_home_for_wiring: Path
+    ) -> None:
+        home = _fake_home_for_wiring
+        cwd_repo = tmp_path / "repoA"
+        f = self._seed_user_scope_entry(home, cwd_repo, recorded_repo_root=str(tmp_path / "repoB"))
+        self._unwire(cwd_repo, all_repos=True)
+        assert not f.exists(), "--all must remove shared user-scope configs across repos"
+
+    def test_unwire_all_flag_parses(self) -> None:
+        from agentalloy.install.__main__ import build_parser
+
+        parser = build_parser()
+        assert parser.parse_args(["unwire", "--all"]).all_repos is True
+        assert parser.parse_args(["unwire"]).all_repos is False
+
+
+# ---------------------------------------------------------------------------
+# User-scope symlink-escape: a prefix that symlinks out of HOME must not
+# redirect a deletion to an arbitrary file (defense-in-depth parity with the
+# repo-scoped escape checks).
+# ---------------------------------------------------------------------------
+
+
+class TestUserScopeSymlinkEscape:
+    def test_symlinked_user_prefix_escaping_home_is_skipped(
+        self, tmp_path: Path, _fake_home_for_wiring: Path
+    ) -> None:
+        from agentalloy.install.subcommands.uninstall import uninstall
+
+        home = _fake_home_for_wiring
+        # An attacker-controlled directory OUTSIDE home, holding a file whose name
+        # matches an allowed harness suffix.
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        target = outside / "claude-code-env.sh"
+        target.write_text("do not delete me")
+        # ~/.agentalloy is a symlink escaping home -> the outside dir.
+        (home / ".agentalloy").symlink_to(outside, target_is_directory=True)
+
+        cwd_repo = tmp_path / "repoA"
+        cwd_repo.mkdir()
+        (cwd_repo / "pyproject.toml").write_text("")
+        entry_path = home / ".agentalloy" / "claude-code-env.sh"
+        st = install_state.load_state(cwd_repo)
+        st["harness_files_written"] = [
+            {
+                "path": str(entry_path),
+                "repo_root": str(cwd_repo),
+                "action": "wrote_new_file",
+                "harness": "claude-code",
+                "sentinel_begin": None,
+                "sentinel_end": None,
+                "content_sha256": "abc",
+            }
+        ]
+        install_state.save_state(st, cwd_repo)
+        # Even --all (the widest sweep) must NOT follow the escaping prefix.
+        result = uninstall(
+            force=True,
+            root=cwd_repo,
+            all_repos=True,
+            remove_user_state=False,
+            remove_env=False,
+            stop_services=False,
+        )
+        assert target.exists(), "deletion escaped the user-scope prefix via symlink"
+        assert all("/outside/" not in str(f) for f in result["files_removed"])
+        assert any("escapes" in w.lower() and "user-scope" in w.lower() for w in result["warnings"])
+
+    def test_real_user_prefix_still_removed(
+        self, tmp_path: Path, _fake_home_for_wiring: Path
+    ) -> None:
+        # Sanity: a legitimate (non-symlinked) user-scope file is still removed, so the
+        # guard didn't break normal teardown.
+        from agentalloy.install.subcommands.uninstall import uninstall
+
+        home = _fake_home_for_wiring
+        f = home / ".agentalloy" / "claude-code-env.sh"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("export ANTHROPIC_BASE_URL=...\n")
+        cwd_repo = tmp_path / "repoA"
+        cwd_repo.mkdir()
+        (cwd_repo / "pyproject.toml").write_text("")
+        st = install_state.load_state(cwd_repo)
+        st["harness_files_written"] = [
+            {
+                "path": str(f),
+                "repo_root": str(cwd_repo),
+                "action": "wrote_new_file",
+                "harness": "claude-code",
+                "sentinel_begin": None,
+                "sentinel_end": None,
+                "content_sha256": "abc",
+            }
+        ]
+        install_state.save_state(st, cwd_repo)
+        uninstall(
+            force=True,
+            root=cwd_repo,
+            all_repos=False,
+            remove_user_state=False,
+            remove_env=False,
+            stop_services=False,
+        )
+        assert not f.exists()
