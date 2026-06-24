@@ -3,6 +3,18 @@
 from __future__ import annotations
 
 import contextlib
+import sys
+from pathlib import Path
+
+# Make the eval/ package importable by tests (e.g. eval/judge_local.py,
+# eval/domain_tasks.py).  This is needed because ``pytest --import-mode=importlib``
+# (used in CI) does not add the repo root to sys.path the way the default
+# ``prepend`` mode does.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+del _REPO_ROOT
+
 import os
 import signal
 import subprocess
