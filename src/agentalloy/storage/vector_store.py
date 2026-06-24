@@ -88,6 +88,16 @@ class CompositionTrace:
     status: str
     correlation_id: str | None = None
     category: str | None = None
+    # Resolved project root (the proxy's per-request cwd) this trace belongs to.
+    # None on legacy rows recorded before repo attribution shipped — they show
+    # up only in the all-repos view, never under a specific repo filter.
+    repo: str | None = None
+    # Per-session attribution: the session key this trace belongs to and how it
+    # was derived ("header" = an explicit harness session-id header; "fingerprint"
+    # = sha1 of the first user message, the fallback for header-less harnesses).
+    # None on legacy rows. Makes "was this session oriented for this phase?" queryable.
+    session_key: str | None = None
+    session_source: str | None = None
     selected_fragment_ids: list[str] = field(default_factory=lambda: [])
     source_skill_ids: list[str] = field(default_factory=lambda: [])
     system_skill_ids: list[str] = field(default_factory=lambda: [])
@@ -203,7 +213,10 @@ CREATE TABLE IF NOT EXISTS composition_traces (
     lm_assist_outcome VARCHAR NOT NULL DEFAULT 'disabled',
     lm_assist_model VARCHAR,
     dense_leg_degraded BOOLEAN NOT NULL DEFAULT FALSE,
-    phase_gate_embed_failed BOOLEAN NOT NULL DEFAULT FALSE
+    phase_gate_embed_failed BOOLEAN NOT NULL DEFAULT FALSE,
+    repo VARCHAR,
+    session_key VARCHAR,
+    session_source VARCHAR
 );
 
 CREATE INDEX IF NOT EXISTS idx_traces_ts ON composition_traces(request_ts);
@@ -270,6 +283,19 @@ def _trace_where(
         params.append(until)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     return where, params
+
+
+def _repo_clause(repo: str | None) -> tuple[str, list[object]]:
+    """Build a repo-scoping predicate for composition_traces (no WHERE/AND prefix).
+
+    Matches the repo exactly OR any path nested under it, so a trace recorded
+    when the harness cwd was a subdirectory of the repo root still counts. The
+    caller composes the returned clause into its own WHERE. Returns ("", []) for
+    ``repo is None`` (the all-repos view).
+    """
+    if repo is None:
+        return "", []
+    return "(repo = ? OR repo LIKE ?)", [repo, repo.rstrip("/") + "/%"]
 
 
 class VectorStoreError(Exception):
@@ -644,8 +670,8 @@ class VectorStore:
                 contract_path, contract_tags, bm25_source, reranked,
                 tokens_returned, tokens_flat_equivalent,
                 lm_assist_outcome, lm_assist_model, dense_leg_degraded,
-                phase_gate_embed_failed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                phase_gate_embed_failed, repo, session_key, session_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 trace.trace_id,
@@ -682,6 +708,9 @@ class VectorStore:
                 trace.lm_assist_model,
                 trace.dense_leg_degraded,
                 trace.phase_gate_embed_failed,
+                trace.repo,
+                trace.session_key,
+                trace.session_source,
             ],
         )
 
@@ -712,7 +741,7 @@ class VectorStore:
                    contract_path, contract_tags, bm25_source, reranked,
                    tokens_returned, tokens_flat_equivalent,
                    lm_assist_outcome, lm_assist_model, dense_leg_degraded,
-                   phase_gate_embed_failed
+                   phase_gate_embed_failed, repo, session_key, session_source
             FROM composition_traces
             {where}
             ORDER BY request_ts DESC
@@ -755,6 +784,9 @@ class VectorStore:
                 lm_assist_model=r[31],
                 dense_leg_degraded=bool(r[32]),
                 phase_gate_embed_failed=bool(r[33]),
+                repo=r[34],
+                session_key=r[35],
+                session_source=r[36],
             )
             for r in rows
         ]
@@ -773,22 +805,29 @@ class VectorStore:
         ).fetchone()
         return int(row[0]) if row else 0
 
-    def aggregate_savings(self) -> dict[str, object]:
-        """Aggregate token-savings telemetry across all compose traces.
+    def aggregate_savings(self, repo: str | None = None) -> dict[str, object]:
+        """Aggregate token-savings telemetry across compose traces.
+
+        When ``repo`` is given, only traces attributed to that project root (or a
+        subdirectory of it) are counted; otherwise all repos are aggregated.
 
         Returns a dict with overall totals and a per-phase breakdown.
         Rows with tokens_flat_equivalent == 0 are excluded from the savings %
         calculation to avoid division-by-zero on legacy/empty rows.
         """
+        repo_clause, repo_params = _repo_clause(repo)
+        repo_and = f" AND {repo_clause}" if repo_clause else ""
+
         overall = self._conn.execute(
-            """
+            f"""
             SELECT
                 COUNT(*) AS total_composes,
                 COALESCE(SUM(tokens_returned), 0) AS sum_returned,
                 COALESCE(SUM(tokens_flat_equivalent), 0) AS sum_flat
             FROM composition_traces
-            WHERE status = 'compose'
-            """
+            WHERE status = 'compose'{repo_and}
+            """,
+            repo_params,
         ).fetchone()
         total_composes = int(overall[0]) if overall else 0
         sum_returned = int(overall[1]) if overall else 0
@@ -797,17 +836,18 @@ class VectorStore:
         savings_pct = round(tokens_saved / sum_flat * 100, 1) if sum_flat > 0 else 0.0
 
         phase_rows = self._conn.execute(
-            """
+            f"""
             SELECT
                 phase,
                 COUNT(*) AS composes,
                 COALESCE(SUM(tokens_returned), 0) AS returned,
                 COALESCE(SUM(tokens_flat_equivalent), 0) AS flat
             FROM composition_traces
-            WHERE status = 'compose'
+            WHERE status = 'compose'{repo_and}
             GROUP BY phase
             ORDER BY composes DESC
-            """
+            """,
+            repo_params,
         ).fetchall()
         per_phase: list[dict[str, object]] = []
         for row in phase_rows:
@@ -835,21 +875,29 @@ class VectorStore:
             "per_phase": per_phase,
         }
 
-    def aggregate_hook_coverage(self) -> dict[str, object]:
+    def aggregate_hook_coverage(self, repo: str | None = None) -> dict[str, object]:
         """Aggregate hook-layer activity: every prompt and every skill pull.
+
+        When ``repo`` is given, only traces attributed to that project root (or a
+        subdirectory of it) are counted; otherwise all repos are aggregated.
 
         Complements ``aggregate_savings`` (which counts only ``status='compose'``)
         by surfacing what the hook router now records — prompts (composed and
         no-compose, incl. cache hits), system-skill pulls, and intake injections —
         grouped by (event_type, status), with a per-phase prompt breakdown.
         """
+        repo_clause, repo_params = _repo_clause(repo)
+        repo_and = f" AND {repo_clause}" if repo_clause else ""
+        repo_where = f" WHERE {repo_clause}" if repo_clause else ""
+
         rows = self._conn.execute(
-            """
+            f"""
             SELECT event_type, status, COUNT(*) AS n
-            FROM composition_traces
+            FROM composition_traces{repo_where}
             GROUP BY event_type, status
             ORDER BY n DESC
-            """
+            """,
+            repo_params,
         ).fetchall()
         by_event: list[dict[str, object]] = [
             {"event_type": str(r[0]), "status": str(r[1]), "count": int(r[2])} for r in rows
@@ -857,7 +905,8 @@ class VectorStore:
 
         def _count(predicate: str, params: list[object]) -> int:
             row = self._conn.execute(
-                f"SELECT COUNT(*) FROM composition_traces WHERE {predicate}", params
+                f"SELECT COUNT(*) FROM composition_traces WHERE {predicate}{repo_and}",
+                [*params, *repo_params],
             ).fetchone()
             return int(row[0]) if row else 0
 
@@ -877,14 +926,15 @@ class VectorStore:
         )
 
         prompt_phase_rows = self._conn.execute(
-            """
+            f"""
             SELECT phase, COUNT(*) AS prompts,
                    COALESCE(SUM(CASE WHEN status = 'composed' THEN 1 ELSE 0 END), 0) AS composed
             FROM composition_traces
-            WHERE event_type = 'prompt_submit'
+            WHERE event_type = 'prompt_submit'{repo_and}
             GROUP BY phase
             ORDER BY prompts DESC
-            """
+            """,
+            repo_params,
         ).fetchall()
         per_phase: list[dict[str, object]] = [
             {"phase": str(r[0]), "prompts": int(r[1]), "composed": int(r[2])}
@@ -946,6 +996,9 @@ _COMPOSITION_TRACES_MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("lm_assist_model", "VARCHAR", ""),
     ("dense_leg_degraded", "BOOLEAN", "DEFAULT FALSE"),
     ("phase_gate_embed_failed", "BOOLEAN", "DEFAULT FALSE"),
+    ("repo", "VARCHAR", ""),
+    ("session_key", "VARCHAR", ""),
+    ("session_source", "VARCHAR", ""),
 )
 
 
@@ -995,6 +1048,15 @@ def _apply_migrations(conn: duckdb.DuckDBPyConnection) -> None:
             stmt = f"{stmt} {default_clause}"
         with contextlib.suppress(Exception):
             conn.execute(stmt)
+
+    # Indexes on late-added columns — created here, not in the DDL, because the
+    # column may not exist yet when the DDL runs against a pre-existing table.
+    with contextlib.suppress(Exception):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_traces_repo ON composition_traces(repo)")
+    with contextlib.suppress(Exception):
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_traces_session ON composition_traces(session_key)"
+        )
 
 
 def open_or_create(path: str | Path) -> VectorStore:
