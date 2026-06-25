@@ -18,7 +18,11 @@ github-copilot) receive a proxy instruction block explaining the proxy is active
 
 ### Wiring modes
 
-| Flag | Behavior |
+`agentalloy wire` always uses proxy wiring (its only flags are `--harness`, `--port`,
+`--via proxy`, `--force`, `--lifecycle-mode`, `--clean-room`, `--json`). The `--legacy`
+and `--mcp-fallback` flags below live on **`agentalloy wire-harness`**, not on `wire`.
+
+| `wire-harness` flag | Behavior |
 |------|----------|
 | (default) | Proxy wiring — writes native API endpoint config |
 | `--legacy` | Legacy markdown-injection — writes static rules files (old behavior) |
@@ -32,10 +36,12 @@ These harnesses have native proxy wiring via `_wire_proxy_*()` functions:
 |---------|-----------|---------------|-------|
 | `continue-closed`, `continue-local` | `.continuerc.json` | `models[].apiBase` | P1 |
 | `aider` | `.aider.conf.yml` | `openai-api-base`, `openai-api-key`, `model` | P1 |
-| `hermes-agent` | `~/.hermes/config.yaml` (user) or `AGENTS.md` (repo) | `custom_providers.agentalloy` | P1 |
+| `hermes-agent` | `~/.hermes/SOUL.md` (user) or `AGENTS.md` (repo) | sentinel-bounded instruction block | P1 |
 | `opencode` | `.opencode/.agentalloy-env` | `OPENAI_API_BASE`, `OPENAI_API_KEY` | P1 |
 | `claude-code` | per-repo `.claude/settings.local.json` `env` (primary) + `.agentalloy/claude-code-env.sh` | `ANTHROPIC_BASE_URL` (only) | P2 |
 | `cline` | `.cline/settings.json` | `apiProvider`, `apiBaseUrl`, `apiKey`, `model` | P2 |
+| `codex` | `~/.codex/config.toml` | `apiBaseUrl` (sentinel-bounded block) | P1 |
+| `openclaw` | `~/.openclaw/plugins.json` | agentalloy plugin entry (proxy base URL) | P1 |
 
 ### Anthropic Messages Router
 
@@ -54,7 +60,7 @@ transport has been removed; `claude-code` is proxy-wired only.
 
 ## Full Harness List
 
-AgentAlloy knows 13 harness entries in its registry: 12 active plus 1 legacy (`mcp-only`). They are grouped below by how AgentAlloy integrates with them under the proxy redesign. See [harness-classification.md](../harness-classification.md) for the classification rule.
+AgentAlloy knows 14 harness entries in its registry. They are grouped below by how AgentAlloy integrates with them under the proxy redesign. See [harness-classification.md](../harness-classification.md) for the classification rule.
 
 ### Proxy-wired (default)
 
@@ -65,9 +71,11 @@ These harnesses honor a custom API base URL. AgentAlloy points them at the local
 | `claude-code` | per-repo `.claude/settings.local.json` `env` block (`ANTHROPIC_BASE_URL=…/proj/<token>` **only** — never an API key), with `.agentalloy/claude-code-env.sh` as a shell/direnv fallback | Native Anthropic Messages passthrough. settings.local.json is read natively by Claude Code, so the proxy auto-loads with no `source`/direnv step (the file is gitignored, so the machine-specific URL stays out of git). Auth is transparent: the proxy forwards the caller's own credential. |
 | `continue-closed`, `continue-local` | `.continuerc.json` (`models[].apiBase`) | JSON mutation per model entry. |
 | `aider` | `.aider.conf.yml` (`openai-api-base`, `openai-api-key`, `model`) | Sentinel-bounded YAML block. |
-| `hermes-agent` | `~/.hermes/config.yaml` (`custom_providers.agentalloy`) user scope, or sentinel block in `AGENTS.md` repo scope | Scope resolved at runtime via `--scope user|repo`. |
+| `hermes-agent` | `~/.hermes/SOUL.md` (user scope) or sentinel block in `AGENTS.md` (repo scope) | Scope resolved at runtime via `--scope user|repo`. |
 | `opencode` | `.opencode/.agentalloy-env` (`OPENAI_API_BASE`) + sentinel block in `.opencode/system-prompt.md` | Env file must be sourced before launching OpenCode. |
 | `cline` | `.cline/settings.json` (`apiProvider`, `apiBaseUrl`, `apiKey`, `model`) | Keys merged into existing file; other settings preserved. |
+| `codex` | `~/.codex/config.toml` (`apiBaseUrl`, sentinel-bounded block) | OpenAI protocol; points Codex at the local proxy. |
+| `openclaw` | `~/.openclaw/plugins.json` (agentalloy plugin entry) | OpenAI protocol; JSON plugin config pointing at the local proxy. |
 
 > **Hook transport removed:** `claude-code` originally used `UserPromptSubmit` / `PreToolUse` / `PostToolUse` hooks installed via `.claude/settings.json`. That transport has been **removed entirely** — `claude-code` is now proxy-wired like every other interceptable harness (the proxy handles phase detection, skill composition, and injection). `agentalloy unwire` still strips any leftover hook entries from a previously hook-wired `~/.claude/settings.json`.
 
@@ -77,7 +85,7 @@ These harnesses route through their own backends and cannot be intercepted by th
 
 | Harness | Target File | Reason proxy is not available |
 |---------|------------|-------------------------------|
-| `cursor` | `.cursor/rules/agentalloy-context.mdc` (or `.cursorrules` fallback) | Cursor routes through its own service; no first-party base-URL override |
+| `cursor` | `.cursor/rules/agentalloy.mdc` (or `.cursorrules` fallback) | Cursor routes through its own service; no first-party base-URL override |
 | `windsurf` | `.windsurf/rules/agentalloy.md` (or `.windsurfrules` fallback) | No first-party base-URL override |
 | `github-copilot` | `.github/copilot-instructions.md` (shared, marker-bounded) | Closed routing through GitHub backend |
 | `gemini-cli` | `GEMINI.md` (shared, marker-bounded) | Ignores `OPENAI_*` / `ANTHROPIC_*` env vars; talks to Google's Gemini API |
@@ -95,7 +103,7 @@ These harnesses route through their own backends and cannot be intercepted by th
 
 | Harness | Notes |
 |---------|-------|
-| `manual` | Emits the proxy instruction block to stdout for manual copy-paste. |
+| `manual` | Emits the proxy instruction block to stderr for manual copy-paste. |
 | `mcp-only` | Legacy entry — no longer accepted standalone. Use `--mcp-fallback` with a real harness. |
 
 ## Auto-Detection
@@ -216,7 +224,7 @@ the injected block, then cleans up any dedicated files:
 | Harness | What gets removed |
 |---------|------------------|
 | `aider` | Sentinel block from `.aider.conf.yml`; `.agentalloy-aider-instructions.md` |
-| `hermes-agent` | Sentinel block from `~/.hermes/config.yaml` (user) or `AGENTS.md` (repo) |
+| `hermes-agent` | Sentinel block from `~/.hermes/SOUL.md` (user) or `AGENTS.md` (repo) |
 | `opencode` | `.opencode/.agentalloy-env` and `.opencode/system-prompt.md` |
 | `claude-code` | `.claude/settings.local.json` `env.ANTHROPIC_BASE_URL` stripped (other settings preserved) + `.agentalloy/claude-code-env.sh` removed; empty `.agentalloy/` directory is also removed |
 | `cline` | Proxy fields from `.cline/settings.json` (or removes file if empty) |

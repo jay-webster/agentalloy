@@ -16,9 +16,9 @@ Domain skills are not exposed to the customize CLI. Attempting to `customize` a 
 
 ## Skill Authoring Pipeline
 
-> **STATUS — target design, not the current shipped tool.** The authoring/QA pipeline (author-critic loop, R1-R8 staged validation) is under redesign. This section describes the intended design; it does not document a stable, shipped command surface. The authoritative R1-R8 contract lives at `src/agentalloy/_packs/meta/sys-skill-authoring-rules.md`. The override system documented below (`agentalloy customize ...`) **is** shipped and current.
+> **STATUS — target design, not the current shipped tool.** The authoring/QA pipeline (author-critic loop, R1-R9 staged validation) is under redesign. This section describes the intended design; it does not document a stable, shipped command surface. The authoritative R1-R9 contract lives at `src/agentalloy/_packs/meta/sys-skill-authoring-rules.md`. The override system documented below (`agentalloy customize ...`) **is** shipped and current.
 
-Skills are produced via an **author-critic pipeline** that validates each skill against the R1-R8 quality contract before it ships in a pack.
+Skills are produced via an **author-critic pipeline** that validates each skill against the R1-R9 quality contract before it ships in a pack.
 
 ### Pipeline stages
 
@@ -26,7 +26,7 @@ Skills are produced via an **author-critic pipeline** that validates each skill 
 
 2. **Self-review** — author checks verification fragments against R3 and rationale fragments against R8.
 
-3. **Independent critic** — an independent reviewer evaluates the source against the full R1-R8 contract plus the review history (`docs/skill-review-history/`).
+3. **Independent critic** — an independent reviewer evaluates the source against the full R1-R9 contract plus the review history (`docs/skill-review-history/`).
 
 4. **Revision pass** — author applies line-level fixes only; redesigns are rejected.
 
@@ -34,9 +34,9 @@ Skills are produced via an **author-critic pipeline** that validates each skill 
 
 6. **Pack assembly** — YAML skills are grouped into packs with `pack.yaml` metadata.
 
-### R1-R8 Quality Contract
+### R1-R9 Quality Contract
 
-The eight rules are defined in `src/agentalloy/_packs/meta/sys-skill-authoring-rules.md`. Summary:
+The nine rules are defined in `src/agentalloy/_packs/meta/sys-skill-authoring-rules.md`. Summary:
 
 - **R1** — Fetch authoritative docs before authoring against fast-moving APIs (tiered sourcing)
 - **R2** — Every non-stdlib name in a code block must show its `import` once
@@ -46,6 +46,7 @@ The eight rules are defined in `src/agentalloy/_packs/meta/sys-skill-authoring-r
 - **R6** — Imports must label authorship honestly (verbatim vs scaffolded)
 - **R7** — Fabricated examples must be flagged or replaced
 - **R8** — Rationale fragments need lexical anchors for the obvious query
+- **R9** — Deprecation workflow (`deprecated` / `superseded_by` fields)
 
 In the target design, review history is stored under `docs/skill-review-history/` and cited by the authoring rules. That directory is currently a placeholder — see its README; the report-generation flow ships with the redesigned pipeline.
 

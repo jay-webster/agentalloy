@@ -1,5 +1,7 @@
 # Spec: Make the SDD fast lane real — route-field-authoritative intake + `sdd-fast → qa → ship`
 
+> **Status: IMPLEMENTED.** This spec describes a shipped feature; retained as design rationale.
+
 ## Problem
 
 The SDD workflow advertises a fast lane, but two things are broken:
@@ -7,8 +9,9 @@ The SDD workflow advertises a fast lane, but two things are broken:
 1. **`route: fast` is silently ignored at intake.** An intake contract can declare
    `route: fast`, but the transition engine always advances `intake → spec`
    (the full lane) regardless of the field. Observed in the v3.2.3 SDD e2e.
-2. **The fast lane skips QA.** Today `sdd-fast → ship` (`gates.py:36`) — the fast
-   lane bypasses verification entirely. It is also *only* a compressed
+2. **The fast lane skips QA.** Before this fix, `sdd-fast → ship` — the fast
+   lane bypassed verification entirely (now resolved: `gates.py` routes
+   `sdd-fast → qa`). It was also *only* a compressed
    build (its prose is "spec → build → test → deliver", no design step, and it
    gates only on `src/**` + `tests/**`).
 

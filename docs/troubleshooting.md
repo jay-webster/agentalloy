@@ -20,7 +20,7 @@ Vulkan/CUDA/ROCm, Metal on Apple Silicon, or CPU otherwise) from the
 into `~/.local/share/agentalloy/runtime/llama.cpp/` and installs a launcher at
 `~/.local/bin/llama-server`. So the usual fix is:
 
-1. Ensure `~/.local/bin` is on your `$PATH`, then re-run `agentalloy pull-models`.
+1. Ensure `~/.local/bin` is on your `$PATH`, then re-run `agentalloy setup` (it reinstalls the runtime and pulls models).
 2. Verify with `llama-server --version`.
 
 If your platform has no prebuilt asset (e.g. s390x), install llama.cpp manually
@@ -36,7 +36,7 @@ The embed or reranker GGUF is missing from the models directory (native installs
 download it under `~/.local/share/agentalloy/`; the container downloads it into
 `/app/data/models` in the `agentalloy-data` volume on first boot).
 
-**Fix:** Re-run the model download step (`agentalloy pull-models`), or for the
+**Fix:** Re-run the model download step via `agentalloy setup`, or for the
 container, restart it (`podman restart agentalloy`) so the entrypoint re-fetches any
 missing GGUF.
 
@@ -68,7 +68,7 @@ container, `podman logs -f agentalloy`.
 
 Another instance of AgentAlloy is running, or another service is using the default port.
 
-**Fix:** Run `agentalloy write-env --port <n>` with a different port, then re-run
+**Fix:** Run `agentalloy write-env --preset <preset> --port <n>` with a different port, then re-run
 `agentalloy wire` to update harness configs.
 
 ### `preflight` fails with `cli_on_path`

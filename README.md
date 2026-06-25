@@ -43,6 +43,31 @@ Things your agent gets composed-and-injected without you pasting them into the p
 
 ---
 
+## Contents
+
+- [Getting started](#getting-started)
+- [Demo](#demo)
+- [What makes the composition different](#what-makes-the-composition-different)
+- [How it works: phases, contracts, signal layer](#how-it-works-phases-contracts-signal-layer)
+- [How to use it](#how-to-use-it)
+- [Container deployment](#container-deployment)
+- [Profiles](#profiles-user-scoped-skill-contexts)
+- [Harness support](#harness-support)
+- [Standalone CLI](#standalone-cli)
+- [REST API](#rest-api)
+- [MCP Server](#mcp-server)
+- [Packs shipping in-tree](#packs-shipping-in-tree)
+- [Architecture](#architecture)
+- [Telemetry](#telemetry)
+- [Configuration](#configuration)
+- [Development](#development)
+- [Need Help?](#need-help)
+- [Contributing](#contributing)
+- [Benchmarks](#benchmarks)
+- [License](#license)
+
+---
+
 ## Getting started
 
 Two doors — pick the one that's you:
@@ -64,7 +89,7 @@ agentalloy setup
 
 The wizard detects your hardware, downloads the GGUF models, starts the embed + reranker servers, lets you pick skill packs, wires your IDE harness, and validates the result — **3–5 minutes** on a warm machine. Its first question is **how to deploy**; both choices run the same wizard:
 
-- **Container** *(recommended for new installs, default)* — agentalloy + two bundled `llama-server` instances in one image pulled from GHCR (`ghcr.io/nrmeyers/agentalloy:latest`). Zero host dependencies, air-gapped friendly (`--image-path` for a local tarball), **CPU-only on every host**. Ships a prebuilt corpus, so first run only waits on the model download; port 47950 is the only external surface. Requires a container runtime — Docker or Podman — that is both **installed and running** (a `podman` CLI on PATH with no started `podman machine`, or a stopped Docker Desktop, does not count). If no usable runtime is found, setup tells you to install one and re-run, or — interactively — offers to switch to a Native install on the spot.
+- **Container** *(recommended for new installs, default)* — agentalloy + two bundled `llama-server` instances in one image pulled from GHCR (`ghcr.io/nrmeyers/agentalloy:latest`). Zero host dependencies, air-gapped friendly, **CPU-only on every host**. Ships a prebuilt corpus, so first run only waits on the model download; port 47950 is the only external surface. Requires a container runtime — Docker or Podman — that is both **installed and running** (a `podman` CLI on PATH with no started `podman machine`, or a stopped Docker Desktop, does not count). If no usable runtime is found, setup tells you to install one and re-run, or — interactively — offers to switch to a Native install on the spot.
 - **Native** — runs the models directly on your host via llama-server with GPU acceleration (NVIDIA CUDA / AMD ROCm / Apple Metal, or CPU if you have no GPU). Fastest composition path, full control.
 
 > **Already using Ollama?** Ollama was dropped as a runtime in v1.3.1 — AgentAlloy now uses `llama-server`. You can still point `RUNTIME_EMBED_BASE_URL` at any OpenAI-compatible 768-dim `nomic-embed-text-v1.5` endpoint you already run.
@@ -112,31 +137,6 @@ See [docs/lm-assist-design.md](docs/lm-assist-design.md) for the design and [doc
 
 ---
 
-## Contents
-
-- [Getting started](#getting-started)
-- [Demo](#demo)
-- [What makes the composition different](#what-makes-the-composition-different)
-- [How it works: phases, contracts, signal layer](#how-it-works-phases-contracts-signal-layer)
-- [How to use it](#how-to-use-it)
-- [Container deployment](#container-deployment)
-- [Profiles](#profiles)
-- [Harness support](#harness-support)
-- [Standalone CLI](#standalone-cli)
-- [REST API](#rest-api)
-- [MCP Server](#mcp-server)
-- [Packs shipping in-tree](#packs-shipping-in-tree)
-- [Architecture](#architecture)
-- [Telemetry](#telemetry)
-- [Configuration](#configuration)
-- [Development](#development)
-- [Need Help?](#need-help)
-- [Contributing](#contributing)
-- [Benchmarks](#benchmarks)
-- [License](#license)
-
----
-
 ## Demo
 
 ```bash
@@ -147,8 +147,11 @@ $ curl -s -X POST http://localhost:47950/compose \
 {
   "output": "## TDD: write the failing test first\n\nIn pytest, ...",
   "source_skills": ["test-driven-development", "pytest-fixtures"],
-  "tokens_returned": 1840,
-  "compose_ms": 47
+  "system_skills_applied": true,
+  "assembly_tier": 0,
+  "recommended_max_tokens": 2048,
+  "dense_leg_degraded": false,
+  "latency_ms": { "retrieval_ms": 31, "assembly_ms": 16, "total_ms": 47 }
 }
 ```
 

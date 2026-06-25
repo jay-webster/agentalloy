@@ -76,12 +76,12 @@ AgentAlloy's composition path is deterministic by default. Two small-local-model
 Configured in `~/.config/agentalloy/.env`:
 
 ```
-UPSTREAM_URL=http://localhost:47951
+UPSTREAM_URL=http://localhost:11434/v1
 UPSTREAM_MODEL=qwen/qwen2.5-coder-14b
 UPSTREAM_API_KEY=***
 ```
 
-- `UPSTREAM_URL` — base URL of the LLM provider (OpenAI-compatible `/v1` endpoint)
+- `UPSTREAM_URL` — base URL of the generative LLM provider (OpenAI-compatible `/v1` endpoint) the proxy forwards chat completions to. No default (empty until configured); point it at your model runner or a hosted provider — **not** the embedding server on `47951`. The example above uses a local OpenAI-compatible runner.
 - `UPSTREAM_MODEL` — model name to forward requests to
 - `UPSTREAM_API_KEY` — API key for the upstream provider (optional for local runners)
 
@@ -288,7 +288,7 @@ There is **no hook transport**. Claude Code is **proxy-wired** via the native An
 ## Telemetry
 
 Every proxy request writes a trace to DuckDB:
-- `trace_id`, `request_ts`, `phase`, `upstream_model`, `signal_matched`, `composed`, `skills_injected`, `compose_ms`, `upstream_latency_ms`, `total_latency_ms`
+- `trace_id`, `request_ts`, `phase`, `task_prompt`, `status`, `assembly_tier`, `assembly_model`, `source_skill_ids`, `system_skill_ids`, `retrieval_latency_ms`, `assembly_latency_ms`, `total_latency_ms`, `session_key`, `repo` (full schema: `CompositionTrace` in `storage/vector_store.py`)
 - Passthrough requests (no composition) still traced — useful for understanding signal filter hit rates
 
 ## Security
