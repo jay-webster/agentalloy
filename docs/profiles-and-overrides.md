@@ -143,7 +143,3 @@ cd ~/work/my-project && agentalloy profile current
 cd ~/projects/homepage && agentalloy profile current
 # → Profile: personal
 ```
-
-## FORCED_PROFILE environment variable
-
-Set `FORCED_PROFILE=<name>` to override profile auto-detection. Useful for testing and scripted workflows. When set, AgentAlloy always uses the specified profile regardless of cwd, git remote, or project markers.

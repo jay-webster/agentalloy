@@ -8,7 +8,7 @@ Operator guide for AgentAlloy. Covers key concepts, terminology, system architec
 
 Packs are opt-in groups of related skills, organized into tiers. Each pack contains multiple skills and a `pack.yaml` manifest declaring its tier. Packs are installed via `agentalloy install-pack <name>` or the interactive `agentalloy setup` wizard.
 
-**Tier hierarchy** (from `skill_tier.py`):
+**Tier hierarchy** (the canonical tier set is the keys of `TAG_POLICY_BY_TIER` in `ingest.py`; per-skill tier is declared in each pack's `pack.yaml` and resolved by `skill_tier.py`):
 
 | Tier | Purpose | Example Packs |
 |------|---------|---------------|
@@ -69,8 +69,8 @@ Fragments are the smallest retrievable unit of skill content. Each fragment has:
 
 **Fragment size rules** (from `ingest.py`):
 
-- Hard minimum: 20 words (rejected below this)
-- Warning minimum: 80 words (lint warning, error with `--strict`)
+- Hard minimum: 5 words (rejected below this)
+- Warning minimum: 25 words (lint warning, error with `--strict`)
 - Hard maximum: 2000 words (rejected above this)
 - Warning maximum: 800 words (lint warning, error with `--strict`)
 
@@ -82,7 +82,7 @@ Phases track where the agent is in the software development lifecycle. The **aut
 intake → spec → design → build → qa → ship
 ```
 
-Plus a fast lane for small, clearly-bounded work that intake can route to (`intake → sdd-fast → ship`, with an escape hatch back to `spec`). In the default lifecycle mode every session opens with intake: the proxy composes the intake workflow on the first request of a fresh session (the signal layer handles `intake` unconditionally), gated per-repo by `lifecycle_mode` — see **Lifecycle modes** below.
+Plus a fast lane for small, clearly-bounded work that intake can route to (`intake → sdd-fast → qa → ship` — the fast lane compresses spec+design+build, then merges into the standard qa → ship verification and delivery). In the default lifecycle mode every session opens with intake: the proxy composes the intake workflow on the first request of a fresh session (the signal layer handles `intake` unconditionally), gated per-repo by `lifecycle_mode` — see **Lifecycle modes** below.
 
 The phase file lives at `.agentalloy/phase` in each project and holds one of these phase names. Each phase has a corresponding workflow skill whose prose is injected as the agent's persona for that phase. Phase transitions are decided by exit gates (see Signal Layer).
 
@@ -228,14 +228,20 @@ The proxy records its activity so every prompt and every skill pull is attributa
 
 ### Config File
 
-User-scope configuration lives under `~/.config/agentalloy/` (the `.env` sourced into the service process; honors `XDG_CONFIG_HOME`). Runtime data — corpus, per-profile datastores, profiles registry — lives under `~/.local/share/agentalloy/` (honors `XDG_DATA_HOME`). Key settings:
+User-scope configuration lives under `~/.config/agentalloy/` (the `.env` sourced into the service process; honors `XDG_CONFIG_HOME`). Runtime data — corpus, per-profile datastores, profiles registry — lives under `~/.local/share/agentalloy/` (honors `XDG_DATA_HOME`). The `.env` is written by `agentalloy install write-env --preset <name>` from a hardware preset; the keys it manages (the override allow-list in `install/subcommands/write_env.py`, mapping to `Settings` fields in `config.py`) are:
 
-- `embed_server.url` — embedding backend URL
-- `embed_server.model` — embedding model name
-- `embed_server.dimensions` — embedding dimensions (768)
-- `ladybug_db_path` — LadybugDB location
-- `profile_name` — active profile
-- `profiles_path` — profiles directory
+- `LADYBUG_DB_PATH` — LadybugDB (skill graph) location
+- `DUCKDB_PATH` — DuckDB (vector + FTS + traces) location
+- `RUNTIME_EMBED_BASE_URL` — embedding llama-server URL (default `http://localhost:47951`)
+- `RUNTIME_EMBEDDING_MODEL` — embedding model GGUF (default `nomic-embed-text-v1.5.Q8_0.gguf`)
+- `SIGNAL_INTENT_BACKEND` — phase-gate intent backend (`reranker`/`cosine`)
+- `SIGNAL_INTENT_RERANK_URL` — reranker llama-server URL
+- `SIGNAL_INTENT_RERANK_MODEL` — reranker model GGUF
+- `DEDUP_HARD_THRESHOLD` / `DEDUP_SOFT_THRESHOLD` — dedup cosine thresholds (defaults `0.92` / `0.80`)
+- `BOUNCE_BUDGET` — re-bounce budget
+- `LOG_LEVEL` — service log level
+
+Embedding dimension is not a config key — it is a fixed code constant (`EMBEDDING_DIM = 768` in `storage/vector_store.py`); switching it requires a re-embed, not an env change. Upstream LLM forwarding uses the bare env vars `UPSTREAM_URL` / `UPSTREAM_MODEL` / `UPSTREAM_API_KEY` (see Environment Variables below).
 
 ### Profiles Config
 
@@ -259,7 +265,6 @@ profiles:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `AGENTALLOY_URL` | AgentAlloy service URL | `http://localhost:47950` |
 | `ANTHROPIC_UPSTREAM_URL` | Upstream for the native Anthropic passthrough (`/proj/<token>/v1/messages`); point at another proxy to chain | `https://api.anthropic.com` |
 | `RUNTIME_EMBED_BASE_URL` | Embed llama-server URL | `http://localhost:47951` |
 | `RUNTIME_EMBEDDING_MODEL` | Embedding model (GGUF) | `nomic-embed-text-v1.5.Q8_0.gguf` |

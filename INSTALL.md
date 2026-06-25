@@ -56,7 +56,7 @@ Once installed, move an existing install to the latest tagged release with one c
 ```bash
 agentalloy upgrade            # detects native vs container; swaps, refreshes corpus if needed, restarts, verifies
 agentalloy upgrade --check    # report current vs latest release, change nothing
-agentalloy upgrade --ref v2.2.0   # pin a specific release (rollback/testing)
+agentalloy upgrade --ref v3.3.5   # pin a specific release (rollback/testing)
 ```
 
 - **Native**: stops the service, re-installs from the release tag (`uv tool install --force git+…@<tag>`), re-ingests changed packs, restarts, and verifies. If the embedding model/dimension changed (a major version), it prompts before the full re-embed (`--yes` auto-confirms; `~30–40 min` on CPU).
@@ -399,7 +399,7 @@ If the user picked `manual`, the output includes copy-pasteable instructions for
 > agentalloy verify
 > ```
 
-This runs 8 enumerated install-time checks (embedding endpoint reachable, returns 768-dim, DuckDB present at the user-scope corpus dir, LadybugDB present, skill count meets minimum, harness config present, harness config URL matches, runtime port available).
+This runs 9 enumerated install-time checks (embedding endpoint reachable, returns 768-dim, DuckDB present at the user-scope corpus dir, LadybugDB present, skill count meets minimum, harness config present, harness config URL matches, runtime port available, plus an advisory reranker-reachability check on native installs).
 
 When the service is running, the corpus checks (`duckdb_present`, `ladybug_present`, `skill_count_meets_minimum`) query `GET /diagnostics/runtime` instead of opening DB files directly — Kùzu's single-writer lock would otherwise make those checks fail spuriously while the service holds the corpus open. `runtime_port_available` accepts `"healthy"` (passes) and `"degraded"` (passes with warning) responses from `/health`.
 
@@ -462,7 +462,7 @@ The subcommand detects the available service manager (systemd/launchd) or contai
 > agentalloy setup --deployment container --runtime podman
 > ```
 >
-> Setup pulls the image directly — no repo checkout, no build context, and no `git` required. For air-gapped environments, use `--image-path` to deploy from a local tarball (produced via `podman save`).
+> Setup pulls the image directly — no repo checkout, no build context, and no `git` required. For air-gapped environments, pre-bake the models with the `full` image and move it onto the host out-of-band with `podman save` / `podman load`.
 >
 > **GGUF models (container):** The `latest` image downloads both GGUFs
 > (`nomic-embed-text-v1.5.Q8_0.gguf` + `Qwen3-Reranker-0.6B-Q8_0.gguf`) into the

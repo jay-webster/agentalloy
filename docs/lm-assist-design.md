@@ -1,8 +1,11 @@
 # LM-assist: a sub-1B intent layer riding alongside the embedder
 
-Status: **shipped, v1.3.0.** Originally a design sketch (2026-06-12); the slices
-it scoped are now in the codebase, each fail-open to the deterministic path.
-Their defaults follow what they measured (see "How we know it works"):
+Status: **shipped (current as of v3.3.5).** Originally a design sketch
+(2026-06-12); the slices it scoped are now in the codebase, each fail-open to the
+deterministic path. Since v2.4.0 the signals-layer intent reranker is the
+**primary phase-transition trigger** (the prefilter no longer short-circuits it),
+and the installer now provisions the reranker service on `:47952`. Their defaults
+follow what they measured (see "How we know it works"):
 
 - **Stage 0 — skill-card indexing** shipped (the re-embed pass indexes a
   synthetic card per skill; `agentalloy reembed --card-index` defaults to
@@ -144,8 +147,8 @@ then became the default once measured.)
 
 - **Model: `qwen3-reranker-0.6b`** — pair-scored via `/v1/completions`
   yes/no logprobs. (The earlier LFM2.5-350M vs `qwen3.5:0.8b` bake-off is
-  obsolete; the reranker won.) Default served at `http://127.0.0.1:60001`.
-- Budget: hard 300 ms timeout, then fail-open. Stage B scores up to 12
+  obsolete; the reranker won.) Default served at `http://127.0.0.1:47952`.
+- Budget: hard 600 ms timeout, then fail-open. Stage B scores up to 12
   fragments concurrently (~150–250 ms).
 - Config: `LM_ASSIST=off|arbitrate` (default `off`), `LM_ASSIST_MODEL`
   (default `qwen3-reranker-0.6b`), `LM_ASSIST_RERANK_URL`,
@@ -180,11 +183,11 @@ measured separately on 2026-06-12, and their shipped defaults follow the results
 5. Cost gate: p50/p95 compose latency reported both ways.
 
 > **Deployment note.** Default-on `reranker` only delivers the measured lift
-> where a `qwen3-reranker-0.6b` server is reachable (default `:60001`). The setup
-> wizard does not yet provision that server, so a fresh install fails open to
-> cosine until one is running — safe, but the win is latent until the reranker is
-> served. Provisioning it in the installer is the follow-up that makes the
-> default real.
+> where a `qwen3-reranker-0.6b` server is reachable (default `:47952`). The setup
+> wizard now provisions that server (the installer writes embed (47951) +
+> reranker (47952) llama-server units/plists — see `install/subcommands/enable_service.py`),
+> so a fresh install serves the reranker by default; it still fails open to cosine
+> if the server is unreachable.
 
 ## Risks
 
