@@ -20,6 +20,7 @@ import sys
 
 from agentalloy.install.subcommands import (
     add,
+    approve,
     cleanup,
     compose,
     contract,
@@ -36,6 +37,7 @@ from agentalloy.install.subcommands import (
     recommend_host_targets,
     recommend_models,
     reembed,
+    rerank_warmup,
     reset,
     reset_step,
     seed_corpus,
@@ -96,6 +98,7 @@ _SUBCOMMANDS = [
     status,
     statusline,
     task,
+    approve,
     cleanup,
     # Underlying step subcommands (still available for power-users + the
     # runbook LLM that drives them individually).
@@ -106,6 +109,7 @@ _SUBCOMMANDS = [
     pull_models,
     start_embed_server,
     start_rerank_server,
+    rerank_warmup,
     write_env,
     wire_harness,
     verify,
