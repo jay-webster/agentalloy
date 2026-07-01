@@ -43,7 +43,7 @@ Packs are opt-in groups of related skills, organized into tiers. Each pack conta
 
 Skills are the unit of expertise. Each skill has a `skill_id`, `canonical_name`, category, and a set of fragments. Skills are either:
 
-- **Domain skills** — task-specific expertise (e.g., "how to write TDD tests", "how to design REST APIs"). Stored in LadybugDB as Skill nodes with Version and Fragment children. Retrieved via hybrid BM25 + dense search.
+- **Domain skills** — task-specific expertise (e.g., "how to write TDD tests", "how to design REST APIs"). Stored in DuckDB as skills / skill_versions / fragments rows. Retrieved via hybrid BM25 + dense search.
 - **System skills** — governance and safety rules (e.g., "never commit secrets", "use conventional commits"). Applied via applicability predicates (`always_apply`, `phase_scope`, `category_scope`).
 
 System skill IDs must start with `sys-`.
@@ -169,14 +169,14 @@ Shipped defaults are immutable; operators override via project or profile layers
 
 ### Data Plane
 
-Two embedded databases:
+Two embedded engines:
 
 | Store | Engine | Role |
 |-------|--------|------|
-| **LadybugDB** | Kuzu (graph DB) | Skill / Version / Fragment / Pack graph — "what skill means and how its pieces relate" |
-| **DuckDB** | DuckDB (columnar) | 768-dim vector index, BM25 FTS index, composition traces, per-profile datastores (`skills.duck`), shared domain datastore (`domain.duck`) |
+| **`agentalloy.duck`** | DuckDB (columnar) | Skill graph — `skills` / `skill_versions` / `fragments` / `skill_dependencies` + `corpus_meta` kv. SQL-canonical source of truth for skill content/metadata. Telemetry lives in a separate service-owned `telemetry.duck`; per-profile datastores remain `skills.duck`. |
+| **`fragments.lance`** | LanceDB | 768-dim vector index (ANN for retrieval, exact cosine for dedup) + native Tantivy BM25 over fragment prose — "find the most relevant fragments". Derived from the DuckDB skill graph. |
 
-Embeddings are stored in DuckDB, not LadybugDB. The Kuzu VECTOR extension is intentionally NOT loaded due to lifecycle incompatibility with FastAPI.
+Embeddings are stored in the LanceDB `fragments.lance` dataset (vector ANN + native Tantivy BM25), not in DuckDB.
 
 ### Service
 
@@ -204,7 +204,7 @@ AgentAlloy runs as a FastAPI service on port 47950 (default). Endpoints:
 **Optional flag-gated steps** (all off by default, all fail open to the deterministic path above when the local model or graph is unavailable):
 
 - **Graph expansion** (`RETRIEVAL_GRAPH_EXPAND=on`, default off): splices `requires`-edge neighbors of the top ranked skills into the candidate set before selection.
-- **Stage B LM fragment re-rank** (`LM_ASSIST=arbitrate` on every preset as of v4.0.2): runs post-fusion, pre-selection. The `qwen3-reranker-0.6b` cross-encoder scores the top 8 fragments (pairwise yes/no logprobs over `/v1/completions`, bounded by `LM_ASSIST_MAX_CANDIDATES`); the rerank server's `--parallel`/`-c` is hardware-conditional (`start_rerank_server.rerank_launch_args`) — `--parallel 2 -c 4096` on GPU, `--parallel 1 -c 2048` on CPU (the launcher value need NOT match `LM_ASSIST_MAX_CANDIDATES`: on CPU the 8 client requests serialize at the single server slot, which is intentional and faster than `--parallel 8` because it avoids OpenMP thread contention). On a HIT, survivors above `LM_ASSIST_KEEP_THRESHOLD` (default `0.0` — gated-off pending a P(yes) measurement) are routed through the SAME `skill_granular_select` diversity selection as the deterministic path (no longer "diversity off"). On disabled/timeout/error, deterministic selection runs unchanged. Budget is `LM_ASSIST_TIMEOUT_MS` (default 2000ms in presets) — warm K=8 batch lands at ~485ms on GPU, ~1170ms on CPU (Xeon W-2225 measurement).
+- **Stage B LM fragment re-rank** (`LM_ASSIST`; **off by default as of v5.0.0** — no eval-set lift + ~500 ms/compose; v4.0.2 had set it `arbitrate` for n=2 / real-life skill-ranking, off for now; re-enable with `LM_ASSIST=arbitrate`): runs post-fusion, pre-selection. The `qwen3-reranker-0.6b` cross-encoder scores the top 8 fragments (pairwise yes/no logprobs over `/v1/completions`, bounded by `LM_ASSIST_MAX_CANDIDATES`); the rerank server's `--parallel`/`-c` is hardware-conditional (`start_rerank_server.rerank_launch_args`) — `--parallel 2 -c 4096` on GPU, `--parallel 1 -c 2048` on CPU (the launcher value need NOT match `LM_ASSIST_MAX_CANDIDATES`: on CPU the 8 client requests serialize at the single server slot, which is intentional and faster than `--parallel 8` because it avoids OpenMP thread contention). On a HIT, survivors above `LM_ASSIST_KEEP_THRESHOLD` (default `0.0` — gated-off pending a P(yes) measurement) are routed through the SAME `skill_granular_select` diversity selection as the deterministic path (no longer "diversity off"). On disabled/timeout/error, deterministic selection runs unchanged. Budget is `LM_ASSIST_TIMEOUT_MS` (default 2000ms in presets) — warm K=8 batch lands at ~485ms on GPU, ~1170ms on CPU (Xeon W-2225 measurement).
 
 ### Embedding Model
 
@@ -231,7 +231,7 @@ The proxy records each intercepted request as a single consolidated trace row (`
 
 User-scope configuration lives under `~/.config/agentalloy/` (the `.env` sourced into the service process; honors `XDG_CONFIG_HOME`). Runtime data — corpus, per-profile datastores, profiles registry — lives under `~/.local/share/agentalloy/` (honors `XDG_DATA_HOME`). The `.env` is written by `agentalloy write-env --preset <name>` from a hardware preset; the keys it manages (the override allow-list in `install/subcommands/write_env.py`, mapping to `Settings` fields in `config.py`) are:
 
-- `LADYBUG_DB_PATH` — LadybugDB (skill graph) location
+- `FRAGMENTS_LANCE_PATH` — Lance fragment dataset (vectors + BM25) location
 - `DUCKDB_PATH` — DuckDB (vector + FTS + traces) location
 - `RUNTIME_EMBED_BASE_URL` — embedding llama-server URL (default `http://localhost:47951`)
 - `RUNTIME_EMBEDDING_MODEL` — embedding model GGUF (default `nomic-embed-text-v1.5.Q8_0.gguf`)
@@ -288,7 +288,7 @@ Skills are authored via the author-critic pipeline:
 1. **Author** — Skill Authoring Agent fragments the source SKILL.md into structured YAML
 2. **Dedup** — deterministic gate rejects near-duplicates (>0.92 similarity); 0.80-0.92 band passed to QA
 3. **QA** — Skill QA Agent reviews against R1-R8 quality contract
-4. **Ingest** — validated YAML loaded into LadybugDB via `python -m agentalloy.ingest`
+4. **Ingest** — validated YAML loaded into `agentalloy.duck` via `python -m agentalloy.ingest`
 
 QA reviews against the R1-R8 quality contract (clear triggers, actionable steps, specific pitfalls, verification, copy-paste-ready commands, no aspirational content, accurate cross-references, context-window fit). See [Skill Authoring and Overrides Spec](skill-authoring-and-overrides-spec.md) for the full definitions.
 
@@ -317,7 +317,7 @@ After adding new packs or updating the embedding model:
 agentalloy reembed
 ```
 
-Recomputes embeddings for all unembedded or updated fragments in LadybugDB.
+Recomputes embeddings for all unembedded or updated fragments in the skill store.
 
 ## Category Vocabularies
 

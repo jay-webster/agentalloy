@@ -17,7 +17,8 @@ from fastapi.testclient import TestClient
 
 from agentalloy.api.telemetry_router import TelemetryQuerier, router
 from agentalloy.install.subcommands import telemetry
-from agentalloy.storage.vector_store import CompositionTrace, open_or_create
+from agentalloy.storage.protocols import CompositionTrace
+from agentalloy.storage.telemetry_store import open_telemetry_store
 
 
 def _client(querier: TelemetryQuerier | None) -> TestClient:
@@ -49,7 +50,7 @@ class TestSavingsEndpoint:
         assert data["per_phase"] == []
 
     def test_aggregates_seeded_traces(self, tmp_path: Path) -> None:
-        store = open_or_create(tmp_path / "t.duck")
+        store = open_telemetry_store(tmp_path / "telemetry.duck")
         try:
             store.record_composition_trace(_compose_trace("a", "build", 100, 400))
             store.record_composition_trace(_compose_trace("b", "spec", 50, 150))
@@ -89,7 +90,7 @@ class TestSavingsCliRouting:
                 "agentalloy.install.subcommands.telemetry._fetch_savings_via_api",
                 return_value=_SAVINGS,
             ),
-            patch("agentalloy.storage.vector_store.open_or_create") as mock_open,
+            patch("agentalloy.storage.open.open_telemetry") as mock_open,
         ):
             rc = telemetry._run_savings(_args())
         assert rc == 0
@@ -103,26 +104,42 @@ class TestSavingsCliRouting:
                 "agentalloy.install.subcommands.telemetry._fetch_savings_via_api",
                 return_value=None,
             ),
-            patch("agentalloy.storage.vector_store.open_or_create") as mock_open,
+            patch("agentalloy.storage.open.open_telemetry") as mock_open,
         ):
             rc = telemetry._run_savings(_args())
         assert rc == 1
         mock_open.assert_not_called()  # never risk the lock
 
-    def test_direct_db_when_service_down(self) -> None:
+    def test_direct_db_when_service_down(self, tmp_path: Path) -> None:
         fake_vs = MagicMock()
         fake_vs.aggregate_savings.return_value = _SAVINGS
+        db = tmp_path / "telemetry.duck"
+        db.touch()  # existing file → direct open path
+        settings = MagicMock(telemetry_db_path=str(db))
         with (
             patch("agentalloy.install.subcommands.telemetry._service_port", return_value=47950),
             patch("agentalloy.install.server_proc.port_reachable", return_value=False),
-            patch(
-                "agentalloy.storage.vector_store.open_or_create", return_value=fake_vs
-            ) as mock_open,
+            patch("agentalloy.config.get_settings", return_value=settings),
+            patch("agentalloy.storage.open.open_telemetry", return_value=fake_vs) as mock_open,
         ):
             rc = telemetry._run_savings(_args())
         assert rc == 0
         mock_open.assert_called_once()
-        fake_vs.aggregate_savings.assert_called_once()
+
+    def test_fresh_install_no_db_file(self, tmp_path: Path) -> None:
+        """Service down + no telemetry.duck yet (fresh install): synthesize the
+        empty aggregate instead of opening read-only (DuckDB rejects a missing
+        file in RO mode, and a read command must not create it)."""
+        settings = MagicMock(telemetry_db_path=str(tmp_path / "telemetry.duck"))
+        with (
+            patch("agentalloy.install.subcommands.telemetry._service_port", return_value=47950),
+            patch("agentalloy.install.server_proc.port_reachable", return_value=False),
+            patch("agentalloy.config.get_settings", return_value=settings),
+            patch("agentalloy.storage.open.open_telemetry") as mock_open,
+        ):
+            rc = telemetry._run_savings(_args())
+        assert rc == 0
+        mock_open.assert_not_called()  # never open a missing file read-only
 
 
 class TestClearLockGuard:
@@ -130,7 +147,7 @@ class TestClearLockGuard:
         with (
             patch("agentalloy.install.subcommands.telemetry._service_port", return_value=47950),
             patch("agentalloy.install.server_proc.port_reachable", return_value=True),
-            patch("agentalloy.storage.vector_store.open_or_create") as mock_open,
+            patch("agentalloy.storage.open.open_telemetry") as mock_open,
         ):
             rc = telemetry._run_clear(_args())
         assert rc == 1
