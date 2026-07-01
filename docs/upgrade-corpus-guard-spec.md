@@ -24,9 +24,9 @@ Extract the corpus-count check into one shared helper and call it from both path
 1. **`seed_corpus.py` — new public `corpus_skill_count() -> int`.** Moves the body
    of `simple_setup._corpus_skill_count` to the module that already owns
    `MIN_SKILL_COUNT` + `_check_duckdb`: resolve `install_state.corpus_dir()`,
-   require both `skills.duck` and `ladybug` present, return
-   `_check_duckdb(duck).skill_count` (or `0` on absent/empty/unreadable). Never
-   raises.
+   require `agentalloy.duck` present (the v5 skill store; its companion vector
+   index is `fragments.lance`), return `_check_duckdb(duck).skill_count` (or `0`
+   on absent/empty/unreadable). Never raises.
 
 2. **`simple_setup._corpus_skill_count` → delegate.** Keep the function name (it's
    the patchable seam the #261 tests stub) but have it return
