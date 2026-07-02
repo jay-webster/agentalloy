@@ -41,6 +41,11 @@ from agentalloy.reads import InconsistentActiveVersion
 from agentalloy.runtime_state import RuntimeCache, load_runtime_cache
 from agentalloy.storage.open import open_fragments, open_skills, open_telemetry
 from agentalloy.telemetry import DuckDBTelemetryWriter
+from agentalloy.web.config_api import router as web_config_router
+from agentalloy.web.ops_api import router as web_ops_router
+from agentalloy.web.skills_api import router as web_skills_router
+from agentalloy.web.spa import mount_web_ui
+from agentalloy.web.wizard_api import router as web_wizard_router
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +290,12 @@ def create_app(*, use_default_lifespan: bool = True) -> FastAPI:
     app.include_router(telemetry_router)
     app.include_router(proxy_router)
     app.include_router(passthrough_router)
+    app.include_router(web_config_router)
+    app.include_router(web_skills_router)
+    app.include_router(web_ops_router)
+    app.include_router(web_wizard_router)
+    # Mount LAST: the SPA's catch-all static mount must lose to every API route.
+    mount_web_ui(app)
 
     return app
 

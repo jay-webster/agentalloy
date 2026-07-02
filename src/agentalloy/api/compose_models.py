@@ -16,8 +16,10 @@ if TYPE_CHECKING:
     from agentalloy.contracts import Contract
 
 # intake/spec/design/build/qa/ship are the full SDD lifecycle; sdd-fast is the
-# fast-lane route (one compressed pass) intake can branch to.
-Phase = Literal["intake", "spec", "design", "build", "qa", "ship", "sdd-fast"]
+# fast-lane route (one compressed pass) intake can branch to; add-skill is the
+# custom-skill authoring lane (scaffold → validate → approve → install) that
+# returns to intake when done.
+Phase = Literal["intake", "spec", "design", "build", "qa", "ship", "sdd-fast", "add-skill"]
 
 # Phase-driven defaults (set 2026-04-25 from POC §15.7 findings; build/ship
 # revisited upward in #13). Short-form action phases historically got k=2, but
@@ -32,6 +34,7 @@ DEFAULT_K_BY_PHASE: dict[str, int] = {
     "build": 4,  # was 2 — pre-corpus default; on-domain skill holds 4-6 frags. Revisited #13.
     "ship": 4,  # was 2 — lockstep with build; max_tokens raised to 4096 to match (E2).
     "sdd-fast": 2,  # compressed action pass stays tight — short-form like build
+    "add-skill": 2,  # single-purpose authoring lane — sized like sdd-fast
     "qa": 4,  # safer default; long-form qa (postmortem) needs anchor context
     "spec": 4,
     "design": 4,
@@ -46,6 +49,7 @@ DEFAULT_MAX_TOKENS_BY_PHASE: dict[str, int] = {
     "build": 4096,  # lockstep with DEFAULT_K_BY_PHASE build=4 (E2 — Risk #5 truncation guard)
     "ship": 4096,  # lockstep with DEFAULT_K_BY_PHASE ship=4
     "sdd-fast": 2048,  # stays tight — k=2 compressed pass
+    "add-skill": 2048,  # sized like sdd-fast (k=2 single-purpose lane)
     "qa": 4096,
     "spec": 4096,
     "design": 4096,
@@ -144,6 +148,14 @@ class ComposeRequest(BaseModel):
         default=None,
         description="Explicit contract tags (bypasses contract_path loading; useful for tests).",
     )
+    debug: bool = Field(
+        default=False,
+        description=(
+            "Attach per-stage retrieval detail (fused scores, skill ranking, "
+            "Stage A/B outcomes) to the response. Observability only — the "
+            "composition itself is unchanged."
+        ),
+    )
 
     def resolved_k(self) -> int:
         """Server-side resolution: caller's k if provided, else phase default."""
@@ -229,6 +241,26 @@ class ComposeTelemetry(BaseModel):
     lm_assist_scores: dict[str, float] = Field(default_factory=dict)
 
 
+class RetrievalDebug(BaseModel):
+    """Per-stage retrieval detail, attached when ``ComposeRequest.debug`` is set.
+
+    Mirrors the in-process ``RetrievalResult`` observability fields that are
+    otherwise consumed into telemetry and discarded — the web playground's
+    "explain this composition" view.
+    """
+
+    eligible_count: int
+    scores_by_id: dict[str, float]
+    skills_ranked: list[str]
+    bm25_source: str
+    reranked: bool
+    lm_assist_outcome: str
+    lm_assist_kept_ids: list[str]
+    lm_assist_dropped_ids: list[str]
+    lm_assist_scores: dict[str, float]
+    dense_leg_degraded: bool
+
+
 class ComposedResult(BaseModel):
     """Successful composition — HTTP 200."""
 
@@ -266,6 +298,9 @@ class ComposedResult(BaseModel):
             "callers that suppress the orchestrator's internal trace write."
         ),
     )
+    debug: RetrievalDebug | None = Field(
+        default=None, description="Per-stage retrieval detail; present only when requested."
+    )
 
 
 class EmptyResult(BaseModel):
@@ -284,6 +319,9 @@ class EmptyResult(BaseModel):
     recommended_max_tokens: int | None = None
     dense_leg_degraded: bool = False
     telemetry: ComposeTelemetry = Field(default_factory=ComposeTelemetry)
+    debug: RetrievalDebug | None = Field(
+        default=None, description="Per-stage retrieval detail; present only when requested."
+    )
 
 
 class ErrorAvailable(BaseModel):
