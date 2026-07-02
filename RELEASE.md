@@ -27,10 +27,10 @@ Conventional Commits with a scope: `type(scope): subject`.
 - Types in use: `feat`, `fix`, `chore`, `docs`, `ci`, `perf`, `style`, `test`.
 - Subject in imperative mood, lower-case, no trailing period.
 - Body explains the *why* and the root cause, not just the *what*.
-- End every commit with the trailer:
+- End every commit with the trailer (use the actual authoring model's name):
 
   ```
-  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  Co-Authored-By: Claude <model> <noreply@anthropic.com>
   ```
 
 ## 3. Pull requests
@@ -140,8 +140,9 @@ These have bitten releases before; surface them up-front when planning a tag.
   manually: `git push origin --delete <branch>`.
 - **Container build is the long pole.** `Container Build & Publish`'s `build-corpus`
   job re-ingests + re-embeds every pack into the image; with new packs or
-  resliced fragments this can run 25–35 min (vs ~5 min for a code-only release).
-  The workflow tolerates up to 150 min — don't panic at 15-min marks. The
+  resliced fragments this can run ~55 min (observed on v5.1.0, which added one
+  pack skill; vs ~6 min for a code-only release). The workflow tolerates up to
+  150 min — don't panic at 45-min marks. The
   `main`-push build and the tag-push build run concurrently and don't share the
   embed cache, so total wall time roughly doubles for big releases. Users get the
   new code via `:latest` from the `main`-push as soon as that finishes; the
