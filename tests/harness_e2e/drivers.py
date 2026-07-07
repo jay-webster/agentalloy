@@ -191,9 +191,18 @@ CASES: tuple[HarnessCase, ...] = (
         name="opencode",
         binary="opencode",
         env=lambda port, root: {},
-        argv=lambda root: ["opencode", "run", PROMPT],
+        # Pin the wired provider/model: opencode auto-registers providers from
+        # ambient credentials (nightly exports ANTHROPIC_API_KEY for
+        # claude-code) and provider auto-selection can beat the config default,
+        # sending the run to api.anthropic.com instead of the proxy.
+        argv=lambda root: ["opencode", "run", "-m", "agentalloy/agentalloy-proxy", PROMPT],
         wire=_wire_opencode,
-        scrub_env=("OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_API_KEY"),
+        scrub_env=(
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ),
         timeout=300,  # first run fetches @ai-sdk/openai-compatible from npm
         notes="Repo-local opencode.json provider block (per-repo /proj/<token>).",
     ),
@@ -212,6 +221,9 @@ CASES: tuple[HarnessCase, ...] = (
         ],
         wire=_wire_aider,
         scrub_env=("OPENAI_API_BASE", "OPENAI_BASE_URL"),
+        # aider never sends a `tools` array; it relies on the carrier gate's
+        # fingerprint-session path (tool-less turns carry when the session is
+        # fingerprint-keyed) for injection — this entry is that path's canary.
         notes="Reads .aider.conf.yml from cwd — exercises the sentinel YAML carrier.",
     ),
     HarnessCase(
