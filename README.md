@@ -205,8 +205,11 @@ This is the key difference from `AGENTS.md` / `SKILL.md` approaches: the **insta
 
 Harnesses fall into two categories:
 
-- **Proxy-wired** (Claude Code, Continue.dev, Aider, Cline, Codex, OpenClaw, OpenCode, Hermes Agent) — full per-turn integration via the local proxy. The proxy intercepts LLM traffic, injects skill context, and evaluates gates automatically.
-- **Sidecar** (Cursor, Windsurf, GitHub Copilot, Antigravity CLI) — static rules file kept current by a file watcher. Reduced capability: no enforcement, advisory text only.
+- **Proxy-wired** (Claude Code, Aider, Cline, Codex, Continue.dev, OpenClaw, OpenCode, Hermes Agent, Copilot CLI — **all nine live-verified** by the harness e2e matrix, real binaries end to end) — full per-turn integration via the local proxy. The proxy intercepts LLM traffic, injects skill context, and evaluates gates automatically. Codex rides the native [OpenAI Responses passthrough](docs/responses-surface.md) (`/proj/<token>/v1/responses`).
+- **Sidecar** (Cursor, Windsurf, Antigravity CLI) — static rules file kept current by a file watcher. Reduced capability: no enforcement, advisory text only.
+- **Dual-carrier** (GitHub Copilot in VS Code, `github-copilot`) — BYOK "Custom Endpoint" proxy carrier (`chatLanguageModels.json`, agent-mode capable, pending manual verification) **plus** the instructions-file sidecar as ambient context and as the fallback when org policy disables BYOK.
+
+> Copilot has two entries: the standalone **Copilot CLI** (`copilot-cli`, npm `@github/copilot`) is proxy-wired via its BYOK env vars (`COPILOT_PROVIDER_*`), and the VS Code surface (`github-copilot`) is dual-carrier as above. In both BYOK modes, model traffic routes to your configured upstream key, not your Copilot subscription.
 
 Proxy-wired is the preferred mode. Full per-harness catalog: [docs/install/harness-catalog.md](docs/install/harness-catalog.md).
 
@@ -236,7 +239,7 @@ Each subcommand emits structured JSON on stdout; pair with `jq` for scripting. F
 
 ## REST API
 
-AgentAlloy serves both proxy surfaces — `POST /proj/{token}/v1/messages` (native Anthropic passthrough: auth-transparent, per-repo `{token}` discriminator, no translation) and `POST /v1/chat/completions` (OpenAI-compatible) — plus `POST /compose` (manual skill composition), `GET /health` (liveness), and `/code/*` when the [code-index module](#code-index-optional) is enabled. Full endpoint list and request/response schemas: [proxy-architecture.md](docs/proxy-architecture.md).
+AgentAlloy serves three proxy surfaces — `POST /proj/{token}/v1/messages` (native Anthropic passthrough: auth-transparent, per-repo `{token}` discriminator, no translation), `POST /v1/chat/completions` (OpenAI-compatible), and `POST /proj/{token}/v1/responses` (native [OpenAI Responses passthrough](docs/responses-surface.md), also auth-transparent) — plus `POST /compose` (manual skill composition), `GET /health` (liveness), and `/code/*` when the [code-index module](#code-index-optional) is enabled. Full endpoint list and request/response schemas: [proxy-architecture.md](docs/proxy-architecture.md).
 
 ---
 

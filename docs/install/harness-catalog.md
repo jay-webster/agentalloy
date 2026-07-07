@@ -37,14 +37,16 @@ These harnesses have native proxy wiring via `_wire_proxy_*()` functions:
 
 | Harness | Config File | Fields Written | Phase |
 |---------|-----------|---------------|-------|
-| `continue-closed`, `continue-local` | `.continuerc.json` | `models[].apiBase` | P1 |
+| `continue-closed`, `continue-local` | repo `.continue/agents/agentalloy.yaml` (modern) + `.continuerc.json` (legacy fallback) | agent YAML: `provider: openai`, `apiBase=…/proj/<token>/v1`, `model: agentalloy-proxy`; rc: `models[].apiBase` | P1 |
 | `aider` | `.aider.conf.yml` | `openai-api-base`, `openai-api-key`, `model` | P1 |
-| `hermes-agent` | `~/.hermes/SOUL.md` (user) or `AGENTS.md` (repo) | sentinel-bounded instruction block | P1 |
-| `opencode` | `.opencode/.agentalloy-env` | `OPENAI_API_BASE`, `OPENAI_API_KEY` | P1 |
+| `hermes-agent` | repo-local `.hermes/config.yaml` + `.hermes/.agentalloy-env` (`HERMES_HOME`) | `model.provider`, `model.base_url` (`…/proj/<token>/v1`), `model.default`; direnv/mise activation carriers; gateway restart | P1 |
+| `opencode` | repo-local `opencode.json` | `provider.agentalloy` (`@ai-sdk/openai-compatible`, `baseURL=…/proj/<token>/v1`, `apiKey`), `model: agentalloy/agentalloy-proxy` | P1 |
 | `claude-code` | per-repo `.claude/settings.local.json` `env` (primary) + `.agentalloy/claude-code-env.sh` | `ANTHROPIC_BASE_URL` (only) | P2 |
-| `cline` | `.cline/settings.json` | `apiProvider`, `apiBaseUrl`, `apiKey`, `model` | P2 |
-| `codex` | `~/.codex/config.toml` | `apiBaseUrl` (sentinel-bounded block) | P1 |
-| `openclaw` | `~/.openclaw/plugins.json` | agentalloy plugin entry (proxy base URL) | P1 |
+| `cline` | `~/.cline/data/settings/providers.json` (user-scoped) | `providers.openai-compatible.settings` (`provider`, `apiKey`, `model`, `baseUrl=…/v1`), `lastUsedProvider` — the exact schema `cline auth` writes (JS-style millisecond timestamps; a strict parse rejects other formats) | P2 |
+| `codex` | repo-local `.codex/` (`CODEX_HOME`) | `config.toml` (`model_provider`, `[model_providers.agentalloy]` with `base_url`, `wire_api="responses"`, `env_key`), `.agentalloy-env`, `.gitignore` | P1 |
+| `openclaw` | `~/.openclaw/openclaw.json` (user-scoped) | `models.providers.agentalloy` (`baseUrl=…/v1`, `api: openai-completions`), `agents.defaults.model.primary` | P1 |
+| `copilot-cli` | `.copilot/.agentalloy-env` (sourced or injected via `agentalloy wrap`) | BYOK env: `COPILOT_PROVIDER_TYPE`, `COPILOT_PROVIDER_BASE_URL` (`…/proj/<token>/v1`), `COPILOT_PROVIDER_API_KEY`, `COPILOT_MODEL` | P1 |
+| `github-copilot` | VS Code user-profile `chatLanguageModels.json` + `.github/copilot-instructions.md` | BYOK `customendpoint` provider group (`apiType: chat-completions`, model url `…/v1/chat/completions`, `toolCalling: true`) + sidecar instructions block | P2 |
 
 #### Multiple harnesses per repo
 
@@ -63,12 +65,12 @@ The SDD lifecycle is **shared** across a repo's harnesses — there is one
   `~/.agentalloy/claude-code-env.sh`) is removed only on the **last repo** wiring that
   harness, so a per-harness unwire in one repo never breaks it in your other repos.
 
-### Anthropic Messages Router
+### Native passthrough surfaces
 
-Two paths serve Anthropic-speaking harnesses:
+- **Anthropic Messages passthrough** (`proxy_passthrough_router.py`, `POST /proj/<token>/v1/messages`) — Claude Code's transport. No translation: it composes + injects, then forwards the request verbatim to a configurable Anthropic upstream with the caller's own credential.
+- **OpenAI Responses passthrough** (`proxy_responses_router.py`, `POST /proj/<token>/v1/responses`) — the codex transport ([responses-surface.md](../responses-surface.md)). Same verbatim-forward, auth-transparent contract against `RESPONSES_UPSTREAM_URL`.
 
-- **Native passthrough** (`proxy_passthrough_router.py`, `POST /proj/<token>/v1/messages`) — Claude Code's transport. No translation: it composes + injects, then forwards the request verbatim to a configurable Anthropic upstream with the caller's own credential.
-- **Translation shim** (`proxy_anthropic_router.py`, bare `/v1/messages`) — for Anthropic-speaking harnesses pointed at an OpenAI-compatible upstream (e.g. Cline). It translates Anthropic request/response formats to/from the OpenAI upstream, including streaming SSE conversion. Text-only; tool_calls deltas are stripped.
+The old bare-`/v1/messages` Anthropic→OpenAI translation shim was removed (see [proxy-surfaces.md](../proxy-surfaces.md)).
 
 ### Legacy Wiring (`--legacy`)
 
@@ -80,7 +82,7 @@ transport has been removed; `claude-code` is proxy-wired only.
 
 ## Full Harness List
 
-AgentAlloy knows 14 harness entries in its registry. They are grouped below by how AgentAlloy integrates with them under the proxy redesign. See [harness-classification.md](../harness-classification.md) for the classification rule.
+AgentAlloy knows 15 harnesses in its registry (16 keys — `gemini-cli` is an alias for `antigravity`). They are grouped below by how AgentAlloy integrates with them under the proxy redesign. See [harness-classification.md](../harness-classification.md) for the classification rule.
 
 ### Proxy-wired (default)
 
@@ -89,13 +91,14 @@ These harnesses honor a custom API base URL. AgentAlloy points them at the local
 | Harness | Proxy Config File | Notes |
 |---------|------------------|-------|
 | `claude-code` | per-repo `.claude/settings.local.json` `env` block (`ANTHROPIC_BASE_URL=…/proj/<token>` **only** — never an API key), with `.agentalloy/claude-code-env.sh` as a shell/direnv fallback | Native Anthropic Messages passthrough. settings.local.json is read natively by Claude Code, so the proxy auto-loads with no `source`/direnv step (the file is gitignored, so the machine-specific URL stays out of git). Auth is transparent: the proxy forwards the caller's own credential. |
-| `continue-closed`, `continue-local` | `.continuerc.json` (`models[].apiBase`) | JSON mutation per model entry. |
+| `continue-closed`, `continue-local` | repo `.continue/agents/agentalloy.yaml` (modern, per-repo `/proj/<token>` — live-verified via the headless `cn` CLI with `--config`) + `.continuerc.json` (legacy) | The legacy rc file is kept because Continue's YAML config path ignored `.continuerc.json` until a Dec 2025 fix and older extensions only read the legacy format. The IDE reads workspace agents from `.continue/agents/` natively; the `cn` CLI needs `--config` pointed at the file. |
 | `aider` | `.aider.conf.yml` (`openai-api-base`, `openai-api-key`, `model`) | Sentinel-bounded YAML block. |
-| `hermes-agent` | `~/.hermes/SOUL.md` (user scope) or sentinel block in `AGENTS.md` (repo scope) | Scope resolved at runtime via `--scope user|repo`. |
-| `opencode` | `.opencode/.agentalloy-env` (`OPENAI_API_BASE`) + sentinel block in `.opencode/system-prompt.md` | Env file must be sourced before launching OpenCode. |
-| `cline` | `.cline/settings.json` (`apiProvider`, `apiBaseUrl`, `apiKey`, `model`) | Keys merged into existing file; other settings preserved. |
-| `codex` | `~/.codex/config.toml` (`apiBaseUrl`, sentinel-bounded block) | OpenAI protocol; points Codex at the local proxy. |
-| `openclaw` | `~/.openclaw/plugins.json` (agentalloy plugin entry) | OpenAI protocol; JSON plugin config pointing at the local proxy. |
+| `hermes-agent` | repo-local `.hermes/config.yaml` (copy of `~/.hermes/config.yaml` with the `model` block redirected at `…/proj/<token>/v1`), activated via `HERMES_HOME` from `.hermes/.agentalloy-env` | Inherently per-repo (`--scope` ignored). direnv/mise carriers auto-set `HERMES_HOME` on cd; wiring restarts the repo-scoped hermes gateway. |
+| `opencode` | repo-local `opencode.json` (`provider.agentalloy` on `@ai-sdk/openai-compatible`, default model `agentalloy/agentalloy-proxy`) | OpenCode ignores `OPENAI_API_BASE`, and its built-in openai provider speaks the Responses API (`/v1/responses`), which the proxy does not serve — the config-file provider block is the only working vector (verified live by the harness e2e matrix). Merges over an existing `opencode.json`; per-repo `/proj/<token>` baked in. |
+| `cline` | `~/.cline/data/settings/providers.json` — `openai-compatible` provider entry + `lastUsedProvider` | The old repo-local `.cline/settings.json` was **inert** (Cline never read it; e2e-matrix finding) — rewired to Cline's real provider store, live-verified via the headless cline CLI. User-scoped → bare `/v1` surface; applies to both the VS Code extension and the CLI. |
+| `codex` | repo-local `.codex/config.toml` under `CODEX_HOME` (hermes pattern): global config copied, `model_provider = "agentalloy"`, `[model_providers.agentalloy]` → `base_url=…/proj/<token>/v1`, `wire_api = "responses"`, `env_key = "OPENAI_API_KEY"` | Modern codex is Responses-API-only (ignores `OPENAI_BASE_URL`; `wire_api = "chat"` removed upstream) — served by the proxy's native [Responses passthrough](../responses-surface.md) (`/proj/<token>/v1/responses`, auth-transparent, `RESPONSES_UPSTREAM_URL`). Activate via `source .codex/.agentalloy-env` or `agentalloy wrap codex`. `auth.json` is never copied; `.codex/.gitignore` keeps codex state out of git. Verified live by the harness e2e matrix. |
+| `openclaw` | `~/.openclaw/openclaw.json` — `models.providers.agentalloy` custom provider (`api: openai-completions`) + `agents.defaults.model.primary` | OpenClaw ignores `OPENAI_BASE_URL`, and the old `plugins.json` entry was never its schema (e2e-matrix finding; live-verified). User-scoped assistant → bare `/v1` surface. Restart the openclaw gateway after wiring. |
+| `copilot-cli` | `.copilot/.agentalloy-env` (BYOK `COPILOT_PROVIDER_*` env vars, per-repo `/proj/<token>` baked in) | Standalone Copilot CLI (npm `@github/copilot`, BYOK GA Apr 2026). Env-var-only carrier: `source` the file or launch via `agentalloy wrap copilot-cli -- copilot`. BYOK routes model traffic to your configured upstream key, not your Copilot subscription. The IDE/extension surface stays sidecar-only as `github-copilot`. |
 
 > **Hook transport removed:** `claude-code` originally used `UserPromptSubmit` / `PreToolUse` / `PostToolUse` hooks installed via `.claude/settings.json`. That transport has been **removed entirely** — `claude-code` is now proxy-wired like every other interceptable harness (the proxy handles phase detection, skill composition, and injection). `agentalloy unwire` still strips any leftover hook entries from a previously hook-wired `~/.claude/settings.json`.
 
@@ -112,8 +115,8 @@ These harnesses route through their own backends and cannot be intercepted by th
 
 **Per-harness regeneration details** (from `regenerators.py`):
 
-- **Cursor** — writes `.cursor/rules/agentalloy-context.mdc` with YAML frontmatter (`description`, `globs`, `alwaysApply: true`). Full file overwrite — AgentAlloy owns this dedicated file entirely. Falls back to `.cursorrules` (shared, marker-bounded) if `.cursor/` directory does not exist.
-- **Windsurf** — writes `.windsurf/rules/agentalloy.md`. Falls back to `.windsurfrules` (shared, marker-bounded) if `.windsurf/` directory does not exist.
+- **Cursor** — writes `.cursor/rules/agentalloy.mdc` with YAML frontmatter (`description`, `globs`, `alwaysApply: true`). Full file overwrite — AgentAlloy owns this dedicated file entirely. Falls back to `.cursorrules` (shared, marker-bounded) if `.cursor/` directory does not exist. Wire-time seed and watcher refresh target the same file.
+- **Windsurf** — writes `.windsurf/rules/agentalloy.md` (dedicated). Falls back to `.windsurfrules` (shared, marker-bounded) if `.windsurf/` directory does not exist. Wire-time seed and watcher refresh target the same file.
 - **GitHub Copilot** — marker-block replacement in `.github/copilot-instructions.md` using `<!-- BEGIN AGENTALLOY-CONTEXT -->` / `<!-- END AGENTALLOY-CONTEXT -->` markers.
 - **Antigravity CLI** (formerly Gemini CLI) — marker-block replacement in `GEMINI.md` using the same `AGENTALLOY-CONTEXT` markers.
 
@@ -136,7 +139,7 @@ When you run `agentalloy wire` without `--harness`, AgentAlloy scans the current
 | 2 | `windsurf` | `.windsurf/`, `.windsurfrules` |
 | 3 | `continue-local` | `.continuerc.json` |
 | 4 | `aider` | `.aider.conf.yml` |
-| 5 | `opencode` | `.opencode/` |
+| 5 | `opencode` | `.opencode/`, `opencode.json` |
 | 6 | `cline` | `.clinerules` |
 | 7 | `antigravity` | `GEMINI.md` |
 | 8 | `github-copilot` | `.github/copilot-instructions.md` |
@@ -179,7 +182,7 @@ Same concept as sentinel-bounded injection, but uses the `AGENTALLOY-CONTEXT` ma
 <!-- END AGENTALLOY-CONTEXT -->
 ```
 
-Used by sidecar regenerator functions (`regenerators.py`) for: Windsurf, GitHub Copilot, Antigravity CLI.
+Used by sidecar regenerator functions (`regenerators.py`) for: Cursor (shared-file fallback), Windsurf, GitHub Copilot, Antigravity CLI — plus the legacy `cline` regenerator (`.clinerules`).
 
 ## MCP Fallback
 
@@ -244,10 +247,12 @@ the injected block, then cleans up any dedicated files:
 | Harness | What gets removed |
 |---------|------------------|
 | `aider` | Sentinel block from `.aider.conf.yml`; `.agentalloy-aider-instructions.md` |
-| `hermes-agent` | Sentinel block from `~/.hermes/SOUL.md` (user) or `AGENTS.md` (repo) |
-| `opencode` | `.opencode/.agentalloy-env` and `.opencode/system-prompt.md` |
+| `hermes-agent` | Repo-local `.hermes/config.yaml` + `.hermes/.agentalloy-env` (via the WireRecord walk); legacy sentinel blocks in `~/.hermes/config.yaml` / `AGENTS.md` stripped for pre-proxy installs |
+| `opencode` | Repo-local `opencode.json` provider block (via the WireRecord walk); legacy `.opencode/.agentalloy-env` + `system-prompt.md` removed for pre-rewrite installs |
 | `claude-code` | `.claude/settings.local.json` `env.ANTHROPIC_BASE_URL` stripped (other settings preserved) + `.agentalloy/claude-code-env.sh` removed; empty `.agentalloy/` directory is also removed |
 | `cline` | Proxy fields from `.cline/settings.json` (or removes file if empty) |
+| `copilot-cli` | `.copilot/.agentalloy-env` (via the WireRecord walk) |
+| `codex` | Repo-local `.codex/{config.toml,.agentalloy-env,.gitignore}` (via the WireRecord walk; a pre-existing `config.toml` is restored from `original_content`) |
 
 For `--legacy` installs, uninstall removes the injected sentinel blocks and dedicated files
 using the same `AGENTALLOY-CONTEXT` markers.

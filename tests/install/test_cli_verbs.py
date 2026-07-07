@@ -503,13 +503,34 @@ class TestUnwire:
         monkeypatch.chdir(repo_root)
         rc = wire._run(argparse.Namespace(harness="openclaw", port=None, force=False, json=True))
         assert rc == 0
-        plugins = Path.home() / ".openclaw" / "plugins.json"
-        assert plugins.exists(), "openclaw wire must write ~/.openclaw/plugins.json"
+        config = Path.home() / ".openclaw" / "openclaw.json"
+        assert config.exists(), "openclaw wire must write ~/.openclaw/openclaw.json"
 
         capsys.readouterr()
         rc = unwire._run(argparse.Namespace(force=False, json=True))
         assert rc == 0
-        assert not plugins.exists(), "unwire must remove ~/.openclaw/plugins.json"
+        assert not config.exists(), "unwire must remove ~/.openclaw/openclaw.json"
+
+    def test_copilot_cli_wire_unwire_roundtrip(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """copilot-cli wires .copilot/.agentalloy-env and unwire removes it.
+
+        Guards the uninstall suffix allowlist: a carrier path missing from the
+        allowlist is silently skipped by the record walk and left behind.
+        """
+        from agentalloy.install.subcommands import unwire, wire
+
+        monkeypatch.chdir(repo_root)
+        rc = wire._run(argparse.Namespace(harness="copilot-cli", port=None, force=False, json=True))
+        assert rc == 0
+        env_file = repo_root / ".copilot" / ".agentalloy-env"
+        assert env_file.exists(), "copilot-cli wire must write .copilot/.agentalloy-env"
+
+        capsys.readouterr()
+        rc = unwire._run(argparse.Namespace(force=False, json=True))
+        assert rc == 0
+        assert not env_file.exists(), "unwire must remove .copilot/.agentalloy-env"
 
     def test_unwire_clears_repo_lifecycle_state(
         self, repo_root: Path, monkeypatch: pytest.MonkeyPatch

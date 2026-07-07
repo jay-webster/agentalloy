@@ -891,6 +891,24 @@ def _wire_proxy(
     if harness == "codex":
         return _wire_proxy_codex(port, root)
 
+    if harness == "github-copilot":
+        # Dual-carrier: instructions sidecar + VS Code BYOK provider group.
+        # Delegate to the provider (openclaw pattern) so the two paths share
+        # one implementation.
+        writer = REGISTRY["github-copilot"].install_writer
+        assert writer is not None, "github-copilot registers an install_writer"
+        records = writer(port, root, _force)
+        return [r.to_dict() for r in records]
+
+    if harness == "copilot-cli":
+        # Env-var-only BYOK carrier (.copilot/.agentalloy-env) — no legacy
+        # registry target, so the instruction fallback below would crash.
+        # Delegate to the provider registry's install_writer.
+        writer = REGISTRY["copilot-cli"].install_writer
+        assert writer is not None, "copilot-cli registers an install_writer"
+        records = writer(port, root, _force)
+        return [r.to_dict() for r in records]
+
     if harness == "openclaw":
         # openclaw wires ~/.openclaw/plugins.json, not a repo instruction file —
         # its legacy registry `target` is None, so the instruction fallback below
@@ -910,8 +928,49 @@ def _wire_proxy_continue(
     port: int,
     root: Path,
 ) -> list[dict[str, Any]]:
-    """Wire Continue.dev to use the proxy as its API base."""
+    """Wire Continue.dev to use the proxy as its API base.
+
+    Two carriers, both repo-local:
+
+    - ``.continue/agents/agentalloy.yaml`` — the MODERN vector (config.yaml
+      schema; read by current extensions and drivable headless via
+      ``cn --config``). Carries the per-repo ``/proj/<token>/v1`` base.
+    - ``.continuerc.json`` — the legacy workspace config, kept because
+      Continue's YAML config path ignored ``.continuerc.json`` until a
+      Dec 2025 fix and older extensions only read the legacy format.
+    """
+    from agentalloy.api.proxy_context import encode_proj_token
+
     variant = "closed" if harness == "continue-closed" else "local"
+
+    # --- Modern carrier: .continue/agents/agentalloy.yaml ---
+    token = encode_proj_token(root)
+    agent_path = root / ".continue" / "agents" / "agentalloy.yaml"
+    agent_path.parent.mkdir(parents=True, exist_ok=True)
+    original_agent = _capture_original(agent_path)
+    agent_yaml = (
+        "name: agentalloy\n"
+        "version: 0.0.1\n"
+        "schema: v1\n"
+        "models:\n"
+        "  - name: AgentAlloy Proxy\n"
+        "    provider: openai\n"
+        "    model: agentalloy-proxy\n"
+        f"    apiBase: http://localhost:{port}/proj/{token}/v1\n"
+        "    apiKey: agentalloy\n"
+        "    roles:\n"
+        "      - chat\n"
+    )
+    install_state._atomic_write(agent_path, agent_yaml)  # pyright: ignore[reportPrivateUsage]
+    agent_record: dict[str, Any] = {
+        "path": str(agent_path),
+        "action": "wrote_new_file" if original_agent is None else "replaced_file",
+        "marker_key": "continue.agents.agentalloy",
+        "content_sha256": _sha256(agent_yaml),
+        **({"original_content": original_agent} if original_agent is not None else {}),
+    }
+
+    # --- Legacy carrier: .continuerc.json ---
     config_path = root / ".continuerc.json"
     config: dict[str, Any] = {}
     original_content = _capture_original(config_path)
@@ -952,13 +1011,14 @@ def _wire_proxy_continue(
     install_state._atomic_write(config_path, serialized)  # pyright: ignore[reportPrivateUsage]
 
     return [
+        agent_record,
         {
             "path": str(config_path),
             "action": "injected_block",
             "marker_key": "models.agentalloy-proxy",
             "content_sha256": _sha256(serialized),
             **({"original_content": original_content} if original_content is not None else {}),
-        }
+        },
     ]
 
 
@@ -979,7 +1039,9 @@ def _wire_proxy_aider(port: int, root: Path) -> list[dict[str, Any]]:
         sentinel_begin,
         f"openai-api-base: {proxy_url}",
         "openai-api-key: agentalloy",
-        "model: agentalloy-proxy",
+        # litellm requires a provider prefix; a bare model name dies with
+        # "LLM Provider NOT provided" before any request (e2e-matrix finding).
+        "model: openai/agentalloy-proxy",
         sentinel_end,
     ]
     block = "\n".join(block_lines)
@@ -1334,55 +1396,67 @@ def _wire_proxy_hermes_agent(port: int, root: Path, scope: str) -> list[dict[str
 
 
 def _wire_proxy_opencode(port: int, root: Path) -> list[dict[str, Any]]:
-    """Wire OpenCode to use the AgentAlloy proxy.
+    """Wire OpenCode to use the AgentAlloy proxy via repo-local ``opencode.json``.
 
-    Writes two files:
-    - ``.opencode/.agentalloy-env``: shell script exporting OPENAI_API_BASE and
-      OPENAI_API_KEY, which the user sources before launching OpenCode.
-    - ``.opencode/system-prompt.md``: brief proxy-mode instruction appended with
-      sentinel markers.
-
-    Prints a one-line activation reminder to stderr.
+    OpenCode does not honor ``OPENAI_API_BASE`` (the old carrier), and its
+    built-in openai provider speaks the Responses API (``/v1/responses``),
+    which the proxy does not serve. The working vector — verified against a
+    live binary by the harness e2e matrix — is a custom provider on the
+    ``@ai-sdk/openai-compatible`` package (Chat Completions wire) pointed at
+    the proxy's per-repo ``/proj/<token>/v1`` endpoint, selected as the
+    default model. OpenCode merges the repo-local config over the user's
+    global one, so their other settings survive.
     """
-    opencode_dir = root / ".opencode"
-    opencode_dir.mkdir(parents=True, exist_ok=True)
+    from agentalloy.api.proxy_context import encode_proj_token
 
-    # Write env file (always overwrites — it's a generated file we own fully)
-    env_path = opencode_dir / ".agentalloy-env"
-    env_content = (
-        f"export OPENAI_API_BASE=http://localhost:{port}/v1\nexport OPENAI_API_KEY=agentalloy\n"
-    )
-    install_state._atomic_write(env_path, env_content)  # pyright: ignore[reportPrivateUsage]
+    token = encode_proj_token(root)
+    proxy_base = f"http://localhost:{port}/proj/{token}/v1"
 
-    # Write / update system-prompt.md with sentinel block
-    prompt_path = opencode_dir / "system-prompt.md"
-    original_content = _capture_original(prompt_path)
-    instruction = (
-        "## AgentAlloy proxy\n\n"
-        f"An AgentAlloy proxy is active at `http://localhost:{port}/v1`.\n"
-        "It intercepts requests to inject skill context before forwarding to your LLM.\n"
-    )
-    existing = prompt_path.read_text() if prompt_path.exists() else ""
-    result_content = _inject_sentinel_block(existing, instruction)
-    install_state._atomic_write(prompt_path, result_content)  # pyright: ignore[reportPrivateUsage]
+    config_path = root / "opencode.json"
+    config: dict[str, Any] = {}
+    original_content = _capture_original(config_path)
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except json.JSONDecodeError as err:
+            print(f"ERROR: {config_path} is not valid JSON", file=sys.stderr)
+            print("FIX:   Fix the JSON syntax or remove the file.", file=sys.stderr)
+            raise SystemExit(1) from err
+
+    config.setdefault("$schema", "https://opencode.ai/config.json")
+    providers = config.get("provider")
+    if not isinstance(providers, dict):
+        providers = {}
+    providers["agentalloy"] = {
+        "npm": "@ai-sdk/openai-compatible",
+        "name": "AgentAlloy",
+        "options": {"baseURL": proxy_base, "apiKey": "agentalloy"},
+        "models": {"agentalloy-proxy": {"name": "AgentAlloy Proxy"}},
+    }
+    config["provider"] = providers
+    config["model"] = "agentalloy/agentalloy-proxy"
+
+    # No in-file install marker: opencode validates its config schema strictly
+    # and rejects unrecognized keys (verified live — the e2e matrix caught it).
+    # Clean removal rides the WireRecord (original_content restore / delete).
+
+    serialized = json.dumps(config, indent=2) + "\n"
+    install_state._atomic_write(config_path, serialized)  # pyright: ignore[reportPrivateUsage]
 
     print(
-        "[AgentAlloy] Activate proxy: source .opencode/.agentalloy-env",
+        "[AgentAlloy] opencode wired via repo-local opencode.json "
+        "(provider 'agentalloy', model agentalloy/agentalloy-proxy).",
         file=sys.stderr,
     )
 
     return [
         {
-            "path": str(env_path),
-            "action": "wrote_new_file",
-            "content_sha256": _sha256(env_content),
-        },
-        {
-            "path": str(prompt_path),
-            "action": "injected_block",
-            "content_sha256": _sha256(instruction.strip()),
+            "path": str(config_path),
+            "action": "wrote_new_file" if original_content is None else "injected_block",
+            "marker_key": "provider.agentalloy",
+            "content_sha256": _sha256(serialized),
             **({"original_content": original_content} if original_content is not None else {}),
-        },
+        }
     ]
 
 
@@ -1542,98 +1616,29 @@ def _wire_proxy_claude_code(port: int, root: Path) -> list[dict[str, Any]]:
 def _wire_proxy_cline(port: int, root: Path) -> list[dict[str, Any]]:
     """Wire Cline to use the AgentAlloy proxy.
 
-    Writes ``.cline/settings.json`` with proxy fields (``apiProvider``,
-    ``apiBaseUrl``, ``apiKey``, ``model``).  Overwrites those four keys;
-    preserves all other keys in the file.
+    Delegates to the provider registry's install_writer (openclaw pattern).
+    The old repo-local ``.cline/settings.json`` carrier was inert — Cline
+    reads the user-scoped ``~/.cline/data/settings/providers.json`` (schema
+    captured from a live ``cline auth``; see providers/cline/install.py).
     """
-    settings_path = root / ".cline" / "settings.json"
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-
-    original_content = _capture_original(settings_path)
-    proxy_url = f"http://localhost:{port}/v1"
-    proxy_fields = {
-        "apiProvider": "openai",
-        "apiBaseUrl": proxy_url,
-        "apiKey": "agentalloy",
-        "model": "agentalloy-proxy",
-    }
-
-    if settings_path.exists():
-        try:
-            settings = json.loads(settings_path.read_text())
-        except json.JSONDecodeError as exc:
-            print(f"ERROR: {settings_path} is not valid JSON", file=sys.stderr)
-            print("FIX:   Fix the JSON syntax or remove the file.", file=sys.stderr)
-            raise SystemExit(1) from exc
-    else:
-        settings = {}
-
-    settings.update(proxy_fields)
-    serialized = json.dumps(settings, indent=2) + "\n"
-    install_state._atomic_write(settings_path, serialized)  # pyright: ignore[reportPrivateUsage]
-
-    # Record as "injected_block" so uninstall knows to merge-remove proxy keys
-    # rather than delete the file outright (users may have their own settings).
-    return [
-        {
-            "path": str(settings_path),
-            "action": "injected_block",
-            "content_sha256": _sha256(serialized),
-            **({"original_content": original_content} if original_content is not None else {}),
-        }
-    ]
+    writer = REGISTRY["cline"].install_writer
+    assert writer is not None, "cline registers an install_writer"
+    records = writer(port, root, False)
+    return [r.to_dict() for r in records]
 
 
 def _wire_proxy_codex(port: int, root: Path) -> list[dict[str, Any]]:
     """Wire Codex to use the AgentAlloy proxy.
 
-    Writes ``~/.codex/config.toml`` with a sentinel-bounded TOML block
-    containing ``apiBaseUrl`` and ``apiKey`` pointing to the proxy.
+    Delegates to the provider registry's install_writer (like openclaw) so the
+    provider module and this path cannot diverge. Writes the repo-local
+    ``CODEX_HOME`` carrier (``.codex/config.toml`` with the agentalloy
+    Responses provider, ``.agentalloy-env``, ``.gitignore``).
     """
-    config_path = Path.home() / ".codex" / "config.toml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    proxy_url = f"http://localhost:{port}/v1"
-    sentinel_begin = "# <!-- BEGIN agentalloy install -->"
-    sentinel_end = "# <!-- END agentalloy install -->"
-
-    block_lines = [
-        sentinel_begin,
-        "[codex]",
-        f'apiBaseUrl = "{proxy_url}"',
-        'apiKey = "agentalloy"',
-        sentinel_end,
-    ]
-    block = "\n".join(block_lines)
-
-    original_content = _capture_original(config_path)
-
-    if config_path.exists():
-        content = config_path.read_text()
-        if sentinel_begin in content and sentinel_end in content:
-            # Replace existing block
-            begin_idx = content.index(sentinel_begin)
-            end_idx = content.index(sentinel_end) + len(sentinel_end)
-            if end_idx < len(content) and content[end_idx] == "\n":
-                end_idx += 1
-            content = content[:begin_idx] + block + "\n" + content[end_idx:]
-        else:
-            if content and not content.endswith("\n"):
-                content += "\n"
-            content += block + "\n"
-    else:
-        content = block + "\n"
-
-    install_state._atomic_write(config_path, content)  # pyright: ignore[reportPrivateUsage]
-
-    return [
-        {
-            "path": str(config_path),
-            "action": "wrote_new_file" if original_content is None else "injected_block",
-            "content_sha256": _sha256(block),
-            **({"original_content": original_content} if original_content is not None else {}),
-        }
-    ]
+    writer = REGISTRY["codex"].install_writer
+    assert writer is not None, "codex registers an install_writer"
+    records = writer(port, root, False)
+    return [r.to_dict() for r in records]
 
 
 def _wire_proxy_instruction(
@@ -1642,12 +1647,19 @@ def _wire_proxy_instruction(
     root: Path,
     scope: str,
 ) -> list[dict[str, Any]]:
-    """Write a proxy instruction block for the harness.
+    """Write the sidecar workflow-context block for the harness.
 
-    For harnesses that don't support custom API endpoints, this writes a
-    sentinel-bounded instruction block explaining that the proxy is active.
+    For harnesses the proxy cannot intercept (cursor, windsurf,
+    github-copilot, antigravity), this seeds the rules file with a truthful
+    sidecar block — written by the SAME per-harness regenerator the watch
+    sidecar uses (``watch.regenerators.REGENERATORS``), so wire-time seed and
+    watcher refresh target one identical file/format and can never diverge
+    (they once wrote different filenames, leaving the seed stale forever).
     """
-    # Resolve target path
+    from agentalloy.watch.regenerators import AGENTALLOY_MARKER, REGENERATORS
+
+    # Resolve target path (mirrors the regenerators' own resolution) so the
+    # WireRecord points at the file the regenerator writes.
     if harness == "cursor":
         rel_path, dedicated = _resolve_cursor_path(root)
     elif harness == "windsurf":
@@ -1664,28 +1676,29 @@ def _wire_proxy_instruction(
     template = _load_template("proxy-instruction.md")
     rendered = _render_template(template, port)
 
-    # Ensure parent directory exists
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if dedicated:
-        install_state._atomic_write(target_path, rendered)  # pyright: ignore[reportPrivateUsage]
-        action = "wrote_new_file"
-        content_sha256 = _sha256(rendered.strip())
+    regenerator = REGENERATORS.get(harness)
+    if regenerator is not None:
+        regenerator(rendered, root)
     else:
-        existing = target_path.read_text() if target_path.exists() else ""
-        result_content = _inject_sentinel_block(existing, rendered)
-        install_state._atomic_write(target_path, result_content)  # pyright: ignore[reportPrivateUsage]
-        action = "injected_block"
-        content_sha256 = _sha256(rendered.strip())
+        # No watcher regenerator for this harness (e.g. hermes legacy scope):
+        # fall back to a marker block at the resolved path.
+        from agentalloy.watch.regenerators import update_block
 
-    return [
-        {
-            "path": str(target_path),
-            "action": action,
-            "content_sha256": content_sha256,
-            **({"original_content": original_content} if original_content is not None else {}),
-        }
-    ]
+        update_block(target_path, AGENTALLOY_MARKER, rendered)
+
+    record: dict[str, Any] = {
+        "path": str(target_path),
+        "action": "wrote_new_file" if original_content is None else "injected_block",
+        "content_sha256": _sha256(rendered.strip()),
+        **({"original_content": original_content} if original_content is not None else {}),
+    }
+    if not dedicated:
+        # Shared files carry a marker block; uninstall strips by these markers
+        # (overriding the default install sentinels). Dedicated files are
+        # deleted/restored whole via the record action.
+        record["sentinel_begin"] = f"<!-- BEGIN {AGENTALLOY_MARKER} -->"
+        record["sentinel_end"] = f"<!-- END {AGENTALLOY_MARKER} -->"
+    return [record]
 
 
 def _wire_mcp_fallback(

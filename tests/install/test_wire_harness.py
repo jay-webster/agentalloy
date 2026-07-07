@@ -309,51 +309,44 @@ class TestOpenHarnesses:
         assert SENTINEL_BEGIN in content
 
     def test_cline_proxy(self, tmp_path: Path) -> None:
-        """Proxy path writes .cline/settings.json with proxy API fields."""
+        """Proxy path merges the user-scoped providers.json store (the old
+        repo-local .cline/settings.json was inert — Cline never read it)."""
         result = wire_compat("cline", port=8000, root=tmp_path)
         assert result["harness"] == "cline"
         assert result["integration_vector"] == "proxy"
-        settings = tmp_path / ".cline" / "settings.json"
-        assert settings.exists()
-        from agentalloy.api.proxy_context import encode_proj_token
+        # The dead repo-local carrier must stay dead.
+        assert not (tmp_path / ".cline" / "settings.json").exists()
 
-        config = json.loads(settings.read_text())
-        assert config["apiProvider"] == "openai"
-        assert (
-            config["apiBaseUrl"] == f"http://localhost:8000/proj/{encode_proj_token(tmp_path)}/v1"
-        )
-        assert config["apiKey"] == "agentalloy"
-        assert config["model"] == "agentalloy-proxy"
+        store_path = Path.home() / ".cline" / "data" / "settings" / "providers.json"
+        assert store_path.exists()
+        store = json.loads(store_path.read_text())
+        entry = store["providers"]["openai-compatible"]["settings"]
+        assert entry["provider"] == "openai-compatible"
+        assert entry["baseUrl"] == "http://localhost:8000/v1"
+        assert entry["apiKey"] == "agentalloy"
+        assert entry["model"] == "agentalloy-proxy"
+        assert store["lastUsedProvider"] == "openai-compatible"
 
     def test_merges_existing_settings(self, tmp_path: Path) -> None:
-        """Cline proxy settings merge with existing settings without overwriting."""
-        # Create a pre-existing settings file with user-defined settings
-        existing_settings = {
-            "apiProvider": "anthropic",
-            "modelId": "claude-3-sonnet",
-            "someOtherSetting": "keep this",
-        }
-        settings_dir = tmp_path / ".cline"
-        settings_dir.mkdir()
-        (settings_dir / "settings.json").write_text(json.dumps(existing_settings, indent=2))
+        """Other providers in the store survive the merge."""
+        store_path = Path.home() / ".cline" / "data" / "settings" / "providers.json"
+        store_path.parent.mkdir(parents=True)
+        store_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "lastUsedProvider": "anthropic",
+                    "providers": {"anthropic": {"settings": {"apiKey": "keep-me"}}},
+                }
+            )
+        )
 
         wire_compat("cline", port=9999, root=tmp_path)
 
-        from agentalloy.api.proxy_context import encode_proj_token
-
-        config = json.loads((settings_dir / "settings.json").read_text())
-
-        # Verify proxy fields are present
-        assert config["apiProvider"] == "openai"
-        assert (
-            config["apiBaseUrl"] == f"http://localhost:9999/proj/{encode_proj_token(tmp_path)}/v1"
-        )
-        assert config["apiKey"] == "agentalloy"
-        assert config["model"] == "agentalloy-proxy"
-
-        # Verify existing settings are preserved
-        assert config["modelId"] == "claude-3-sonnet"
-        assert config["someOtherSetting"] == "keep this"
+        store = json.loads(store_path.read_text())
+        assert store["providers"]["anthropic"]["settings"]["apiKey"] == "keep-me"
+        assert "openai-compatible" in store["providers"]
+        assert store["lastUsedProvider"] == "openai-compatible"
 
     def test_aider(self, repo_root: Path) -> None:
         result = wire_compat("aider", port=8000, root=repo_root, legacy=True)
@@ -487,7 +480,7 @@ class TestEdgeCases:
         are excluded from the legacy path test.
         """
         # Harnesses that do not support the legacy (markdown-injection) path
-        legacy_excluded = {"mcp-only", "codex", "openclaw"}
+        legacy_excluded = {"mcp-only", "codex", "openclaw", "copilot-cli"}
         for harness in VALID_HARNESSES:
             # Reset state for each
             state_file = repo_root / ".agentalloy" / "install-state.json"
@@ -585,7 +578,7 @@ class TestAiderProxyWiring:
         content = conf.read_text()
         assert "openai-api-base: http://localhost:8000/v1" in content
         assert "openai-api-key: agentalloy" in content
-        assert "model: agentalloy-proxy" in content
+        assert "model: openai/agentalloy-proxy" in content
         # Proxy mode does NOT create a separate instructions file — context
         # injection is handled server-side by the proxy
         assert ".agentalloy-aider-instructions.md" not in content
@@ -620,43 +613,8 @@ class TestAiderProxyWiring:
 # ---------------------------------------------------------------------------
 
 
-class TestOpenCodeProxyWiring:
-    """Proxy-mode wiring for opencode writes env file + system prompt."""
-
-    def test_writes_env_file(self, repo_root: Path) -> None:
-        result = wire_compat("opencode", port=8000, root=repo_root)
-        assert result["integration_vector"] == "proxy"
-        env_path = repo_root / ".opencode" / ".agentalloy-env"
-        assert env_path.exists()
-        content = env_path.read_text()
-        assert "OPENAI_API_BASE=http://localhost:8000/v1" in content
-        assert "OPENAI_API_KEY" in content
-
-    def test_writes_system_prompt(self, repo_root: Path) -> None:
-        wire_compat("opencode", port=8000, root=repo_root)
-        prompt = repo_root / ".opencode" / "system-prompt.md"
-        assert prompt.exists()
-        content = prompt.read_text()
-        assert SENTINEL_BEGIN in content
-        assert "localhost:8000" in content
-
-    def test_idempotent_rewire(self, repo_root: Path) -> None:
-        wire_compat("opencode", port=8000, root=repo_root)
-        wire_compat("opencode", port=9000, root=repo_root)
-        prompt = (repo_root / ".opencode" / "system-prompt.md").read_text()
-        env = (repo_root / ".opencode" / ".agentalloy-env").read_text()
-        assert "localhost:9000" in prompt
-        assert "localhost:8000" not in prompt
-        assert prompt.count(SENTINEL_BEGIN) == 1
-        assert "localhost:9000" in env
-
-    def test_prints_activation_guidance(
-        self, repo_root: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        wire_compat("opencode", port=8000, root=repo_root)
-        captured = capsys.readouterr()
-        assert "source" in captured.err
-        assert ".agentalloy-env" in captured.err
+# OpenCode proxy wiring is covered in tests/install/test_opencode_proxy_wiring.py
+# (repo-local opencode.json provider block — the old env-file carrier was dead).
 
 
 # ---------------------------------------------------------------------------
@@ -699,7 +657,7 @@ class TestIntakeActivationMarkers:
         """
         instruction_extensions = {".md", ".mdc"}
         # Harnesses that do not support legacy markdown injection
-        legacy_excluded = {"mcp-only", "codex", "openclaw"}
+        legacy_excluded = {"mcp-only", "codex", "openclaw", "copilot-cli"}
         for harness in VALID_HARNESSES:
             state_file = repo_root / ".agentalloy" / "install-state.json"
             if state_file.exists():

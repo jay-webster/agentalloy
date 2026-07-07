@@ -1019,6 +1019,10 @@ def uninstall(
         home / ".continue",
         home / ".agentalloy",
         home / ".openclaw",
+        home / ".cline",
+        # VS Code user profile (github-copilot BYOK carrier), per platform.
+        home / ".config" / "Code",
+        home / "Library" / "Application Support" / "Code",
     )
     # Set of harness target basenames / suffix-paths we ever write. Any
     # `path` in state that doesn't end in one of these is rejected even
@@ -1029,7 +1033,12 @@ def uninstall(
         ".clinerules",
         ".cursorrules",
         ".cursor/rules/agentalloy.mdc",
+        ".windsurfrules",
+        ".windsurf/rules/agentalloy.md",
+        ".github/copilot-instructions.md",
+        "chatLanguageModels.json",  # VS Code BYOK provider store (github-copilot)
         ".continuerc.json",
+        ".continue/agents/agentalloy.yaml",  # continue modern workspace agent
         ".cursor/mcp.json",
         ".aider.conf.yml",
         ".agentalloy-aider-instructions.md",
@@ -1038,10 +1047,17 @@ def uninstall(
         ".hermes/.agentalloy-env",  # hermes HERMES_HOME activation env file
         "mcp_servers.json",  # ~/.claude/mcp_servers.json
         "claude-code-env.sh",  # ~/.agentalloy/claude-code-env.sh
-        ".cline/settings.json",  # Cline proxy config
+        ".cline/settings.json",  # Cline legacy (inert, pre-rewrite) repo config
+        ".cline/data/settings/providers.json",  # Cline provider store (user-scoped)
         ".claude/settings.json",  # Claude Code hook wiring (merged hooks)
         "agentalloy-hook-claude-code.sh",  # ~/.agentalloy/hooks/ hook script
-        ".openclaw/plugins.json",  # openclaw plugin config
+        ".openclaw/plugins.json",  # openclaw legacy (pre-rewrite) plugin config
+        ".openclaw/openclaw.json",  # openclaw custom model provider config
+        ".copilot/.agentalloy-env",  # copilot-cli BYOK env carrier
+        "opencode.json",  # opencode repo-local provider config
+        ".codex/config.toml",  # codex repo-local CODEX_HOME config
+        ".codex/.agentalloy-env",  # codex CODEX_HOME activation env file
+        ".codex/.gitignore",  # codex repo-local state gitignore
     )
     root_resolved = root.resolve()
     # Trusted user-scope prefixes, resolved. A prefix that is itself a symlink
