@@ -103,6 +103,11 @@ the acceptance below:
 then installs it through the existing rail:
 `agentalloy new-skill-pack` → `agentalloy validate-pack` → `agentalloy install-pack`.
 
+Once installed, the promoted skill is front-loaded by the signal layer for the
+phase and tags it matches through the existing install → corpus → signal path;
+that injection is *inherited* behavior, so this feature relies on it but does
+not re-test it (AC 6 pins the no-regression boundary).
+
 The lesson's shape maps cleanly onto the domain-skill fragment taxonomy
 (`ingest.py`):
 
@@ -114,16 +119,24 @@ The lesson's shape maps cleanly onto the domain-skill fragment taxonomy
 | module / problem-type tags         | `domain_tags`         |
 
 Strict-mode install (the default for `validate-pack`/`install-pack`) requires
-`execution` + `verification` + `rationale` fragments and a valid category
-(`engineering|ops|review|design|tooling|quality`), which is exactly what this
-mapping produces.
+`execution` + `verification` + `rationale` fragments and a valid production
+category — one of `engineering | ops | review | design | tooling | quality`
+(the seventh, `benchmark`, is reserved for benchmark packs excluded from
+production retrieval and would not be used by a promoted lesson) — which is
+exactly what this mapping produces.
 
 **Curation, not just capture.** The install rail's **dedup gate** (hard cosine
-≥ 0.92 blocks, soft ≥ 0.80 warns, cross-pack) is the check CE's flat
-`CLAUDE.md`/lesson-file growth lacks. A re-captured lesson that duplicates an
-existing corpus skill is blocked (or downgraded only with an explicit
-`--allow-duplicates`), so the corpus stays sharp instead of bloating with
-near-identical rules. CE captures; AgentAlloy curates.
+≥ 0.92, soft ≥ 0.80, cross-pack) is the *signal* CE's flat
+`CLAUDE.md`/lesson-file growth lacks: on a hard cross-pack duplicate it reports
+the match and returns a non-zero `EXIT_DEDUP` (soft matches only warn). One
+important nuance, surfaced from the code: the gate is a **signal, not a
+prevention** — the existing `install-pack` rail has *already* written the skill
+rows and vectors by the time the dedup pass runs, and it does **not** roll back
+(`--allow-duplicates` only flips the exit code). So real curation is a
+*promotion-flow* responsibility: on `EXIT_DEDUP` the flow must skip the
+promotion or roll the just-installed skill back, rather than assume the rail
+kept the duplicate out. CE captures; the promotion flow — acting on the dedup
+signal — curates.
 
 ## Acceptance Criteria
 
@@ -136,19 +149,27 @@ near-identical rules. CE captures; AgentAlloy curates.
    for a *different* task (`docs/solutions/<other>.md`) exists still returns
    `NOT_MET` for the current task. (This is the explicit guard against the naive
    `artifact_exists: *.md` form.)
-3. **Prose/gate self-consistency.** The `sdd-deliver-and-ship` skill's shipped
-   `raw_prose` instructs writing `docs/solutions/<slug>.md` and literally contains
-   the `docs/solutions/` token derived from the new gate leaf, so
-   `derive_invariants`/`check_prose` stay consistent — verifiable by a
-   prose-invariant test over the shipped skill.
+3. **Prose/gate self-consistency.** The shipped `sdd-deliver-and-ship` skill's
+   `raw_prose` instructs writing `docs/solutions/<slug>.md`, and loading the
+   shipped skill produces **no invariant-violation warning** — the ship prose and
+   its gate stay self-consistent under the invariant checker. Verifiable by a
+   prose-invariant test over the shipped skill. (Mechanically, the gate leaf's
+   `docs/solutions/` path is auto-derived as a required prose token, so the two
+   must move together — an implementation consequence the design phase records.)
 4. **Promotion produces a valid pack.** Given a `docs/solutions/<slug>.md` lesson,
    the promotion flow produces a pack under `.agentalloy/custom-skills/` that
    passes `agentalloy validate-pack` in strict mode (execution + verification +
    rationale fragments, valid category, `domain_tags` within the tier's soft
    ceiling).
-5. **Duplicate lessons are curated out.** Promoting a lesson whose fragments
-   duplicate an existing corpus skill (cosine ≥ 0.92) is blocked by the dedup
-   gate (`EXIT_DEDUP`) unless `--allow-duplicates` is passed.
+5. **Duplicate lessons are caught and not left in the corpus.** Promoting a
+   lesson whose fragments duplicate an existing corpus skill (cosine ≥ 0.92)
+   surfaces the hard-duplicate signal (`EXIT_DEDUP`, non-zero, unless
+   `--allow-duplicates` is passed) *and* the promotion flow acts on it — skipping
+   or rolling back the install — so the near-duplicate is not left served in the
+   corpus. Verifiable by a test that promotes a near-identical lesson and asserts
+   both the `EXIT_DEDUP` signal and that the skill is absent from the corpus
+   afterward. (The bare `install-pack` rail does not roll back on its own; this
+   AC is what makes curation real rather than advisory.)
 6. **Read-path reused, not rebuilt.** No file under `src/agentalloy/code_index/`,
    `src/agentalloy/retrieval/`, or `src/agentalloy/api/` is modified, and
    `docs/solutions/*.md` remains retrievable via `agentalloy code search` with no
@@ -156,6 +177,12 @@ near-identical rules. CE captures; AgentAlloy curates.
 7. **Opt-out parity.** Under `lifecycle-mode off` or `flow free`, neither the
    codify gate nor any new prompt fires — the bridge is inert, consistent with
    the existing opt-out semantics, so Options A/B remain unaffected.
+8. **Override-breakage migration is documented.** A migration note exists (in the
+   shipped `sdd-deliver-and-ship` skill's `change_summary` and in Piece 1 of this
+   spec) stating that a pre-existing enabled profile override for
+   `sdd-deliver-and-ship` that lacks the new `docs/solutions/` token is dropped at
+   runtime (shipped prose served, warning logged) until its author adds the token.
+   Checkable: the note is present and names the token and the drop behavior.
 
 ## Out of Scope
 
@@ -198,6 +225,11 @@ recorded here so design starts grounded, not to constrain acceptance:
   `agentalloy codify` / `agentalloy lessons promote`) vs. an agent-driven flow
   reusing the existing `add-skill` lane and its human-approval gate. Plus the
   lesson→fragment template and how `domain_tags` are derived from the lesson.
+- **Duplicate handling (per AC 5).** How the promotion flow acts on the dedup
+  signal, since the `install-pack` rail does not roll back on its own: a
+  *pre-ingest* similarity probe before installing, or a *post-`EXIT_DEDUP`*
+  rollback of the just-installed skill. Decide which, and whether
+  `--allow-duplicates` is ever surfaced to the user.
 - **Lesson quality gate (optional).** Whether to additionally require an
   `artifact_contains` `sections:` set (e.g. `Problem` / `Approach` /
   `What didn't work`) on the lessons file, and the multi-file glob semantics that

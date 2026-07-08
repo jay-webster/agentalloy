@@ -21,10 +21,9 @@ scope:
     - "src/agentalloy/retrieval/**"
     - "src/agentalloy/api/**"
     - "src/agentalloy/_corpus/**"
-success_criteria:
-  - "The SDD lifecycle cannot close out a task that recorded no lessons entry for that task"
-  - "A compound-engineering lesson file can be promoted into the instruction corpus through the existing pack rail, subject to the dedup gate"
-  - "No new proxy surface, retrieval engine, or code-index change is introduced — the read-path is reused, not rebuilt"
+# Per the spec-phase template, acceptance has a single home: the spec doc's
+# `## Acceptance Criteria`. Left empty here to avoid a second, driftable copy.
+success_criteria: []
 related_contracts: []
 created_at: 2026-07-08T00:00:00Z
 ---
@@ -51,3 +50,7 @@ Acceptance criteria and out-of-scope live in `docs/spec/compound-engineering-bri
 > paths (`.gitignore` lines 68, 99). The tracked copies under `docs/spec-contracts/`
 > are the committed, reviewable form of that spec-phase work-item; this contract is
 > a valid `contracts.py` artifact and can be dropped into the runtime path verbatim.
+> To arm a live run, copy this file to
+> `.agentalloy/contracts/spec/compound-engineering-bridge.md` and the spec doc to
+> `docs/spec/compound-engineering-bridge.md` (dropping the `.spec` infix so the
+> spec exit-gate's `docs/spec/*.md` glob finds it).
