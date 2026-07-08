@@ -172,10 +172,13 @@ signal — curates.
    both the `EXIT_DEDUP` signal and that the skill is absent from the corpus
    afterward. (The bare `install-pack` rail does not roll back on its own; this
    AC is what makes curation real rather than advisory.)
-6. **Read-path reused, not rebuilt.** No file under `src/agentalloy/code_index/`,
-   `src/agentalloy/retrieval/`, or `src/agentalloy/api/` is modified, and
-   `docs/solutions/*.md` remains retrievable via `agentalloy code search` with no
-   code change (the code index already ingests it).
+6. **Read-path reused, not rebuilt.** No file under `src/agentalloy/code_index/`
+   or `src/agentalloy/retrieval/` is modified and no new proxy/injection *surface*
+   is added — the only `api/` change is D1's behavior-preserving delegation of the
+   existing work-item resolver down to `contracts.py`. `docs/solutions/*.md`
+   remains retrievable via `agentalloy code search` with no code change (the code
+   index already ingests it). *(Refined from the original "no api/ change": design
+   D1 moved the shared resolver so `signals` needn't import `api`.)*
 7. **Opt-out parity.** Under `lifecycle-mode off` or `flow free`, neither the
    codify gate nor any new prompt fires — the bridge is inert, consistent with
    the existing opt-out semantics, so Options A/B remain unaffected.
