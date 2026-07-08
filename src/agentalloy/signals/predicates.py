@@ -359,6 +359,35 @@ def eval_approval_recorded(args: dict[str, Any], ctx: PredicateContext) -> Predi
         return PredicateResult.UNKNOWN
 
 
+def eval_lessons_recorded(args: dict[str, Any], ctx: PredicateContext) -> PredicateResult:
+    """MET when the current task has recorded a compound-engineering lesson.
+
+    Resolves the active work-item slug for the phase (``args['phase']`` or, by
+    default, ``ctx.current_phase``) via the canonical
+    :func:`agentalloy.contracts.resolve_current_contract` — cursor-first, then the
+    sole contract for the phase, else no single work-item — and checks for
+    ``docs/solutions/<slug>.md``.
+
+    Slug-scoped on purpose. A bare ``artifact_exists: docs/solutions/*.md`` would
+    be MET forever by the first lesson ever written (the stale-file no-op), so it
+    could not force *this* task to codify. Tying the check to the active work-item
+    slug makes it order-independent and per-task. Deterministic and DB-free;
+    returns UNKNOWN (fail-open, never blocks) when no single work-item resolves,
+    mirroring how Tier-2 composition stays silent on an ambiguous/absent work-item.
+    """
+    from agentalloy.contracts import resolve_current_contract  # lazy: keep signals free of import cost
+
+    phase = args.get("phase") or ctx.current_phase
+    if phase is None:
+        return PredicateResult.UNKNOWN
+    _cid, contract_path = resolve_current_contract(ctx.project_root, str(phase))
+    if contract_path is None:
+        return PredicateResult.UNKNOWN
+    slug = contract_path.stem
+    lesson = ctx.project_root / "docs" / "solutions" / f"{slug}.md"
+    return PredicateResult.MET if lesson.is_file() else PredicateResult.NOT_MET
+
+
 def eval_phase_in(args: dict[str, Any], ctx: PredicateContext) -> PredicateResult:
     if ctx.current_phase is None:
         return PredicateResult.UNKNOWN
@@ -617,6 +646,7 @@ PREDICATES: dict[str, Callable[[dict[str, Any], PredicateContext], PredicateResu
     "artifact_size_min": eval_artifact_size_min,
     "artifact_newer_than": eval_artifact_newer_than,
     "approval_recorded": eval_approval_recorded,
+    "lessons_recorded": eval_lessons_recorded,
     "phase_in": eval_phase_in,
     "phase_not_in": eval_phase_not_in,
     "tool_use_about_to_fire": eval_tool_use_about_to_fire,

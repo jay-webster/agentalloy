@@ -384,6 +384,56 @@ def code_index_query_params(contract: Contract, project_root: Path) -> CodeIndex
     )
 
 
+def _read_cursor_value(project_root: Path) -> str | None:
+    """Read the work-item cursor from ``.agentalloy/cursor`` (a contracts-relative id).
+
+    Mirrors ``skill_loader._read_cursor`` but lives here so this low-level module
+    can resolve the current work-item without importing the signals/api layers.
+    Returns ``None`` when absent or empty.
+    """
+    try:
+        raw = (project_root / ".agentalloy" / "cursor").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    value = raw.strip()
+    return value or None
+
+
+def resolve_current_contract(project_root: Path, phase: str) -> tuple[str | None, Path | None]:
+    """Resolve the current work-item contract for ``phase``.
+
+    Returns ``(contract_id, abs_path)`` where ``contract_id`` is the
+    contracts-relative posix path (e.g. ``build/01-cache.md``) and ``abs_path`` is
+    the file to use. Resolution order:
+
+    1. An explicit ``.agentalloy/cursor`` (set by ``agentalloy task next``) that
+       resolves to a file contained under ``.agentalloy/contracts/``.
+    2. Exactly one contract in ``contracts/<phase>/`` → that single work-item
+       (the common single-item phase: spec/design/qa/ship).
+    3. Zero, or ≥2 with no cursor (a build fan-out) → ``(None, None)``: don't guess.
+
+    This is the canonical resolver shared by the proxy (Tier 2 domain composition)
+    and the ``lessons_recorded`` gate predicate — both must agree on "which task
+    is current", so neither may fall back to ``latest_contract`` (newest by mtime),
+    which ignores the cursor and can select a stale prior-cycle contract.
+    """
+    contracts_root = (project_root / ".agentalloy" / "contracts").resolve()
+    cursor = _read_cursor_value(project_root)
+    if cursor:
+        candidate = (contracts_root / cursor).resolve()
+        # Containment guard: a stale/hostile cursor must not read outside the tree.
+        if candidate.is_file() and candidate.is_relative_to(contracts_root):
+            return candidate.relative_to(contracts_root).as_posix(), candidate
+        # stale/invalid cursor → fall through to the phase default
+
+    in_phase = list_contracts_for_phase(project_root, phase)
+    if len(in_phase) != 1:
+        # 0 → nothing current; ≥2 → fan-out, wait for the cursor.
+        return None, None
+    only = in_phase[0].resolve()
+    return only.relative_to(contracts_root).as_posix(), only
+
+
 def latest_contract(project_root: Path, phase: str | None = None) -> Path | None:
     """Most recently modified contract (optionally filtered by phase)."""
     if phase:

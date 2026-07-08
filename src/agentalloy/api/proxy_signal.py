@@ -178,24 +178,18 @@ def _resolve_current_contract(cwd: Path, phase: str) -> tuple[str | None, Path |
     3. Two or more, no cursor → a fan-out phase (build): don't guess which task is
        current — stay silent until ``task next`` sets the cursor.
     4. None → ``(None, None)``; Tier 2 stays silent.
+
+    Thin wrapper over :func:`agentalloy.contracts.resolve_current_contract` — the
+    canonical resolver, shared with the ``lessons_recorded`` gate predicate so the
+    proxy and the gate always agree on which work-item is current. Kept here for
+    the existing call sites and to emit the stale-cursor diagnostic.
     """
-    from agentalloy.contracts import list_contracts_for_phase
+    from agentalloy.contracts import resolve_current_contract
 
-    contracts_root = (cwd / ".agentalloy" / "contracts").resolve()
-    cursor = _read_cursor(cwd)
-    if cursor:
-        candidate = (contracts_root / cursor).resolve()
-        # Containment guard: a stale/hostile cursor must not read outside the tree.
-        if candidate.is_file() and candidate.is_relative_to(contracts_root):
-            return candidate.relative_to(contracts_root).as_posix(), candidate
-        logger.warning("cursor %r does not resolve to a contract file; using phase default", cursor)
-
-    in_phase = list_contracts_for_phase(cwd, phase)
-    if len(in_phase) != 1:
-        # 0 → nothing to compose; ≥2 → fan-out, wait for the cursor.
-        return None, None
-    only = in_phase[0].resolve()
-    return only.relative_to(contracts_root).as_posix(), only
+    cid, path = resolve_current_contract(cwd, phase)
+    if path is None and _read_cursor(cwd):
+        logger.warning("cursor is set but did not resolve to a contract file; used phase default")
+    return cid, path
 
 
 # Per-phase banner directive — the imperative core of the per-turn recency banner,
