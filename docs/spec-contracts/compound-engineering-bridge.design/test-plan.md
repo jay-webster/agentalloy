@@ -6,10 +6,11 @@
 
 ## Test Cases
 
-- **TC1 — codify gate blocks close-out (AC 1).** Given a wired repo at `ship`
-  with the ship contract for `<slug>` and **no** `docs/solutions/<slug>.md`,
-  evaluating ship's `exit_gates` returns `NOT_MET`; after writing
-  `docs/solutions/<slug>.md`, it returns `MET`. *(predicate unit + phase-gate.)*
+- **TC1 — codify gate blocks the advance to ship (AC 1).** Given a wired repo at
+  `qa` with the qa contract for `<slug>` and **no** `docs/solutions/<slug>.md`,
+  evaluating qa's `exit_gates` (the `qa → ship` forward edge) returns `NOT_MET`
+  and `phase set ship` is blocked; after writing `docs/solutions/<slug>.md`, it
+  returns `MET` and the advance is allowed. *(predicate unit + phase-gate.)*
 
 - **TC2 — stale lessons file does not satisfy the gate (AC 2).** Given the active
   slug is `<slug>` but only `docs/solutions/<other>.md` exists (a prior task's
@@ -17,7 +18,7 @@
   against the `artifact_exists: *.md` no-op.
 
 - **TC3 — prose/gate self-consistency (AC 3).** Loading the shipped
-  `sdd-deliver-and-ship` skill produces **no** invariant-violation warning, and
+  `sdd-verify-and-review` skill produces **no** invariant-violation warning, and
   its `raw_prose` contains the literal `docs/solutions/` token. *(A prose-invariant
   test over `derive_invariants` + `check_prose`.)*
 
@@ -44,7 +45,7 @@
   `flow free`, workflow steering (including the codify gate) is paused. Neither
   fires.
 
-- **TC8 — migration note present (AC 8).** The shipped `sdd-deliver-and-ship`
+- **TC8 — migration note present (AC 8).** The shipped `sdd-verify-and-review`
   `change_summary` and the spec's Piece 1 both state that a pre-existing enabled
   profile override lacking the `docs/solutions/` token is dropped at runtime until
   its author adds the token. *(A doc/string-presence assertion.)*

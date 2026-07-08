@@ -11,8 +11,10 @@ domain_tags:
   - yaml-schema
 scope:
   touches:
-    - "src/agentalloy/_packs/sdd/sdd-deliver-and-ship.yaml"
+    - "src/agentalloy/_packs/sdd/sdd-verify-and-review.yaml"
     - "src/agentalloy/signals/predicates.py"
+    - "src/agentalloy/api/proxy_signal.py"
+    - "src/agentalloy/contracts.py"
     - "src/agentalloy/install/subcommands/**"
     - "docs/solutions/**"
     - "tests/**"

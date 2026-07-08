@@ -66,11 +66,13 @@ surface it with zero new code. Piece 2 is the deliberate promotion of a
 
 ## Piece 1 — Codify at ship
 
-**What.** When a task reaches `ship`, before the lifecycle can be reset for the
-next task, the agent must record what it learned to `docs/solutions/<slug>.md`.
-A deterministic exit-gate leaf makes "task closed out" contingent on that
-artifact existing for *this* task. This mirrors CE's compound step, which is the
-last thing a run does.
+**What.** Before a task's change can advance into `ship`, the agent must record
+what it learned to `docs/solutions/<slug>.md`; a deterministic exit-gate leaf
+makes that advance contingent on the artifact existing for *this* task. Codify is
+the last gate before delivery — faithful to CE's compound-last step. (Which edge
+carries the gate is a design decision — see `## Design surface`. Design resolved
+it to the `qa → ship` forward edge, because ship's terminal close-out turned out
+not to be gate-enforceable: the `ship → intake` reset bypasses gate evaluation.)
 
 Two constraints were surfaced directly from the code and are load-bearing for
 the acceptance below:
@@ -140,11 +142,11 @@ signal — curates.
 
 ## Acceptance Criteria
 
-1. **Codify gate blocks close-out.** With AgentAlloy wired (`lifecycle-mode full`)
-   and a task at `ship`, the lifecycle cannot be closed out / reset for the next
-   task while `docs/solutions/<slug>.md` for the current task is absent; it can
-   once the entry exists. Verifiable by a gate-evaluation unit test that returns
-   `NOT_MET` with no lessons entry and `MET` once present.
+1. **Codify gate blocks delivery.** With AgentAlloy wired (`lifecycle-mode full`),
+   the lifecycle cannot advance a task into `ship` while `docs/solutions/<slug>.md`
+   for that task is absent; it can once the entry exists. Verifiable by a
+   gate-evaluation unit test that returns `NOT_MET` with no lessons entry and
+   `MET` once present.
 2. **Stale files do not satisfy the gate.** A test in which only a lessons entry
    for a *different* task (`docs/solutions/<other>.md`) exists still returns
    `NOT_MET` for the current task. (This is the explicit guard against the naive
@@ -220,7 +222,8 @@ recorded here so design starts grounded, not to constrain acceptance:
   close-out transition? And must codify survive `agentalloy phase set --force`
   (deterministic completeness leaves are bypassed by `--force` today; the
   approval gate added an unconditional `_approval_gate_blocks` carve-out to
-  survive it)?
+  survive it)? *(Resolved in design: `qa → ship`, since ship's close-out is not
+  gate-enforceable; no `--force` carve-out, by proportionality.)*
 - **Promotion flow shape.** A new first-class CLI subcommand (e.g.
   `agentalloy codify` / `agentalloy lessons promote`) vs. an agent-driven flow
   reusing the existing `add-skill` lane and its human-approval gate. Plus the

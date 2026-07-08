@@ -19,58 +19,77 @@ rationale and the alternative rejected.
 
 ### D1 — Codify-gate predicate: a new slug-scoped `lessons_recorded`
 
-**Decision.** Add one new deterministic predicate,
-`lessons_recorded`, to `signals/predicates.py`, registered in the `PREDICATES`
-dict. It resolves the **active task slug** from the ship work-item contract
-(the newest `.agentalloy/contracts/ship/*.md`, matching how the phase already
-tracks its work-item) and returns `MET` iff `docs/solutions/<slug>.md` exists,
-`NOT_MET` otherwise, `UNKNOWN` on an unreadable/absent contract. It mirrors
-`eval_approval_recorded` (predicates.py) for the slug-derivation pattern and
-reuses the shared `_glob_files` helper.
+**Decision.** Add one new deterministic predicate, `lessons_recorded`, to
+`signals/predicates.py`, registered in `PREDICATES`. It resolves the **active
+task slug** via the runtime's canonical work-item resolver — **not** by mtime —
+and returns `MET` iff `docs/solutions/<slug>.md` exists, `NOT_MET` if it does
+not, and `UNKNOWN` when no single work-item can be resolved. It is DB-free (pure
+disk reads), so it needs no re-embed and takes effect the moment the wheel
+carries it.
 
-**Why not reuse `artifact_exists`?** Ruled out by AC 2: `artifact_exists:
+**Why not `artifact_exists`?** Ruled out by AC 2: `artifact_exists:
 docs/solutions/*.md` is `MET` on *any* match, so the first lesson ever written
-satisfies it forever — the stale-file no-op the spec calls out.
+satisfies it forever — the stale-file no-op.
 
-**Why not reuse `artifact_newer_than`?** It would work
-(`path=docs/solutions/*.md` newer than a `docs/ship/*.md` marker) but it is
-**write-order-fragile**: if the agent writes the lesson *before* the ship record
-in the same phase, `max(solutions_mtime) < max(ship_mtime)` and the gate falsely
-reports `NOT_MET`. A slug-scoped existence check is order-independent and
-unambiguous, which is worth ~15 lines of new predicate. The predicate is
-DB-free (read straight from disk), so it needs no re-embed and takes effect the
-moment the wheel carries it.
+**Why not `artifact_newer_than`?** Write-order-fragile: if the agent writes the
+lesson before the phase's exit artifact in the same phase, the mtime comparison
+falsely reports `NOT_MET`. A slug-scoped existence check is order-independent.
 
-**Build-time verification required:** the slug the ship phase considers "active"
-must be pinned to a single, unambiguous source. If multiple ship contracts can
-coexist, resolve by the same rule the phase's own work-item cursor uses, not
-"newest mtime" as a guess. Confirm against `skill_loader`/`contracts.latest_contract`
-before coding.
+**Slug resolution (spike D1 — resolved).** The canonical resolver is
+`_resolve_current_contract(cwd, phase)` (`api/proxy_signal.py:164`):
+cursor-first (`.agentalloy/cursor`, written by `agentalloy task next`, ordered by
+filename), then the sole `contracts/<phase>/*.md` if exactly one exists, else
+`(None, None)` — it deliberately *refuses to guess* when several coexist with no
+cursor. `lessons_recorded` reuses it against `ctx.current_phase` and takes
+`Path(...).stem` as the slug; `(None, None)` → `UNKNOWN` (mirroring how Tier-2
+composition stays silent). `latest_contract` (mtime, `contracts.py:387`) is a
+footgun here — it ignores the cursor, disagrees with `task next`'s filename
+ordering, and can select a stale prior-cycle contract (nothing deletes old
+contracts; only the cursor is cleared on transition).
 
-### D2 — Gate the ship phase's own close-out edge
+**Layering fix (required, folded into task 01).** `_resolve_current_contract`
+lives in the `api` layer, but predicates live in `signals`, and `signals` must
+not import `api`. Factor the resolver down into `contracts.py` (or
+`skill_loader.py`) and have both the proxy and the predicate call it there.
 
-**Decision.** Append the `lessons_recorded` leaf to
-`sdd-deliver-and-ship.yaml`'s `exit_gates.all_of` (alongside the existing
-`artifact_exists docs/ship/*.md` and `artifact_contains …[Summary, Rollback]`),
-so the lesson is the **last** thing a task produces — matching compound
-engineering, where the compound step ends the run. Ship is terminal; its only
-transition out is the user-initiated reset to `intake`, and that transition is
-what the leaf gates.
+**Prose↔gate coupling (AC 3).** Because the predicate is slug-scoped it need not
+expose a `path` glob, so — unlike the original `artifact_exists` sketch — it does
+not *auto*-derive the `docs/solutions/` prose token. Coupling is instead made
+explicit in the host skill: the `docs/solutions/<slug>.md` write instruction goes
+in `raw_prose`, and the `docs/solutions/` token is asserted as an invariant (an
+authored `prose_invariants` entry, or the predicate's optional advisory `path`
+arg — build's choice). Either way prose and gate stay consistent, and the
+'write the lesson' advisory can still fire.
 
-**Why not gate `qa → ship`?** Codifying before the change is even shipped is
-premature — the delivery record (`docs/ship/<slug>.md`, written in ship §3) and
-any late lesson from the act of shipping wouldn't be captured yet. Ship
-close-out is the natural terminal seam and sits right next to §3 "Record the
-delivery," where the prose change lands.
+### D2 — Gate the `qa → ship` forward edge (not ship close-out)
 
-**Build-time verification required:** confirm the ship→intake reset actually
-evaluates ship's `exit_gates` through `_forward_gate_blocks` /
-`decide_transition`. Grounding showed the forward-gate machinery evaluates the
-current phase's gates, but a *reset* (backward jump to the start) may be treated
-specially. If the reset bypasses exit-gate evaluation, fall back to gating the
-`qa → ship` edge instead — the predicate is identical; only the host pack YAML
-(`sdd-verify-and-review.yaml`) changes. This is the one place the design has a
-branch; resolve it with a spike before task 02.
+**Decision (spike D2 — resolved; overrides the spec's tentative ship-close-out
+option).** Append the `lessons_recorded` leaf to **`sdd-verify-and-review.yaml`**
+(the `qa` phase), whose forward edge is `qa → ship`. A `NOT_MET` leaf there
+blocks `agentalloy phase set ship` until the lesson exists.
+
+**Why not ship close-out, as first imagined?** Because it is *unenforceable*.
+Ship is terminal and self-loops (`_PHASE_GRAPH["ship"] = "ship"`, gates.py:41),
+and the only route out is the user-initiated reset `phase set intake`. Both the
+CLI completeness gate and the approval gate short-circuit on `target !=
+_PHASE_GRAPH[current]` (`phase.py:116, 159`), so the `ship → intake` reset — like
+every backward/bail/reset jump — is **never gated**, and ship's `exit_gates` are
+effectively never enforced on any transition. A codify leaf on ship would be
+inert. `qa → ship` is a real forward edge (`_PHASE_GRAPH["qa"] = "ship"`,
+gates.py:35) and does evaluate qa's `exit_gates` via `_forward_gate_blocks`.
+
+**Consequence for the design.** Codify moves from "ship close-out" to "the last
+gate of qa, just before ship" — still after the change is verified and before it
+is delivered, faithful to compound engineering's compound-last step (and
+slightly better: the lesson exists before ship writes its PR narrative). The
+prose change and the leaf both land in the **qa** skill; the slug the predicate
+resolves is qa's current work-item — the same `task_slug` that chains into ship,
+so `docs/solutions/<slug>.md` is unchanged.
+
+**Determinism caveat.** `_forward_gate_blocks` evaluates with `lm_client=None`,
+so only a hard `NOT_MET` blocks — an `UNKNOWN` passes. `lessons_recorded` is a
+deterministic disk check, so it blocks correctly; it must never depend on an
+embed/LM path.
 
 ### D3 — `--force` bypasses codify (no carve-out)
 

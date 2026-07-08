@@ -7,6 +7,8 @@ domain_tags:
 scope:
   touches:
     - "src/agentalloy/signals/predicates.py"
+    - "src/agentalloy/api/proxy_signal.py"
+    - "src/agentalloy/contracts.py"
     - "tests/**"
   avoids:
     - "src/agentalloy/_packs/**"
@@ -20,17 +22,21 @@ created_at: 2026-07-08T00:00:00Z
 
 ## Task
 
-Add a deterministic, DB-free predicate `lessons_recorded` to
-`signals/predicates.py` and register it in the `PREDICATES` dict. It resolves the
-**active task slug** from the ship work-item contract (do the D1 spike first:
-confirm the canonical resolution — reuse `contracts.latest_contract`/the phase
-cursor rule, not a raw newest-mtime guess), then returns `MET` iff
-`docs/solutions/<slug>.md` exists, `NOT_MET` if it does not, and `UNKNOWN` if the
-ship contract is missing/unreadable. Model it on `eval_approval_recorded` and
-reuse `_glob_files`; keep it side-effect-free and independent of write order.
+First factor `_resolve_current_contract` down from `api/proxy_signal.py:164` into
+`contracts.py` (or `skill_loader.py`) and update the proxy to call it there, so
+`signals` can reuse it without importing `api`. Then add a deterministic, DB-free
+predicate `lessons_recorded` to `signals/predicates.py`, registered in
+`PREDICATES`. It resolves the **active task slug** via that shared resolver
+against `ctx.current_phase` (cursor-first → sole-contract → `(None, None)`), takes
+`Path(...).stem` as the slug, and returns `MET` iff `docs/solutions/<slug>.md`
+exists, `NOT_MET` if not, and `UNKNOWN` when no single work-item resolves
+(`(None, None)`). Model it on `eval_approval_recorded`; reuse `_glob_files`; keep
+it side-effect-free and independent of write order. Do **not** use
+`latest_contract` (mtime) — it ignores the cursor and can pick a stale contract.
 
 ## Test cases
 
 - TC1 (AC 1): `NOT_MET` with no `docs/solutions/<slug>.md`, `MET` once present.
 - TC2 (AC 2): only `docs/solutions/<other>.md` present → `NOT_MET` for `<slug>`.
-- Edge: missing/unreadable ship contract → `UNKNOWN` (never raises).
+- Edge: no single work-item resolvable → `UNKNOWN` (never raises).
+- Refactor: proxy banner slug resolution unchanged after the resolver moves.

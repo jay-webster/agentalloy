@@ -6,22 +6,24 @@
 
 ## Tasks
 
-1. **Add the `lessons_recorded` predicate** *(surface: signal predicates)* —
-   Implement `eval_lessons_recorded` in `signals/predicates.py`, register it in
-   `PREDICATES`, resolving the active slug from the ship work-item contract and
-   returning `MET`/`NOT_MET`/`UNKNOWN` against `docs/solutions/<slug>.md`. Mirror
-   `eval_approval_recorded`. Includes the D1 slug-resolution spike.
-   Closes **AC 1**, **AC 2**. Build contract `01`.
+1. **Add the `lessons_recorded` predicate (+ resolver refactor)** *(surface:
+   signal predicates)* — Factor `_resolve_current_contract` down from
+   `api/proxy_signal.py` into `contracts.py`/`skill_loader.py` (so `signals` calls
+   it without importing `api`), then implement `eval_lessons_recorded` in
+   `signals/predicates.py` and register it in `PREDICATES`: resolve the active
+   slug via that resolver against `ctx.current_phase`, return `MET` iff
+   `docs/solutions/<slug>.md` exists, `NOT_MET` if not, `UNKNOWN` on no single
+   work-item. Deterministic (no LM/embed). Closes **AC 1**, **AC 2**. Build
+   contract `01`.
 
-2. **Wire the ship gate + codify prose** *(surface: SDD workflow-skill YAML)* —
-   In `sdd-deliver-and-ship.yaml`: append the `lessons_recorded` leaf to
-   `exit_gates.all_of`; add a codify instruction to the "Checkpoint first"
-   paragraph and §3 "Record the delivery" so `raw_prose` literally contains the
-   `docs/solutions/` token derive_invariants now requires; update `change_summary`
-   with the override-migration note. Precede with the D2 spike confirming the
-   reset edge evaluates ship's gates (else host the leaf on
-   `sdd-verify-and-review.yaml`). Closes **AC 3**, **AC 8**; contributes **AC 1**.
-   Build contract `02`.
+2. **Wire the qa→ship gate + codify prose** *(surface: SDD workflow-skill YAML)* —
+   In **`sdd-verify-and-review.yaml`** (the qa phase — spike D2 showed ship's own
+   gates are unenforceable): append the `lessons_recorded` leaf to
+   `exit_gates.all_of`; add a codify instruction to the qa prose so the agent
+   writes `docs/solutions/<slug>.md` before advancing to ship and `raw_prose`
+   carries the `docs/solutions/` token; assert that token as an invariant; update
+   `change_summary` with the override-migration note. Closes **AC 3**, **AC 8**;
+   contributes **AC 1**. Build contract `02`.
 
 3. **Lesson→domain-skill pack generator** *(surface: skill-pack authoring)* —
    A module that parses `docs/solutions/<slug>.md` into a valid domain-skill pack
@@ -44,7 +46,7 @@
    `flow free`; a README note framing this as the first slice of the Knowledge
    module. Closes **AC 6**, **AC 7**. Build contract `05`.
 
-**Order & dependencies.** 1 → 2 (the gate leaf needs the predicate; do the D1/D2
-spikes first). 3 → 4 (the CLI drives the generator). 5 is verification/docs, last.
-Pieces 1 (tasks 1–2) and 2 (tasks 3–4) are independent and can proceed in
-parallel after their spikes; task 5 closes out both.
+**Order & dependencies.** 1 → 2 (the gate leaf needs the predicate). 3 → 4 (the
+CLI drives the generator). 5 is verification/docs, last. Pieces 1 (tasks 1–2) and
+2 (tasks 3–4) are independent and can proceed in parallel; task 5 closes out both.
+Spikes D1 (slug resolver) and D2 (gated edge) are resolved in `approach.md`.
