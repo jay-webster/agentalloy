@@ -22,6 +22,7 @@ from typing import Any
 
 from agentalloy.install.lesson_pack import generate_lesson_pack
 from agentalloy.install.output import add_json_flag, print_rich, write_result
+from agentalloy.install.subcommands.new_skill_pack import _SKILL_ID_RE
 
 SCHEMA_VERSION = 1
 
@@ -96,6 +97,24 @@ def promote_lesson(
     and ``install_local_pack``.
     """
     from agentalloy.config import get_settings
+
+    # Validate before any path construction — `slug` is user-controlled (a CLI
+    # arg) and is used directly to build the lesson-read path below. Mirrors
+    # new_skill_pack._SKILL_ID_RE / install_pack._PACK_NAME_RE, whose docstrings
+    # are explicit about the same threat: no path traversal (`..`, `/`) or scheme
+    # injection via a generated/consumed file path. Without this, a slug like
+    # `../../../secret-notes/private` reads and ingests an arbitrary `.md` file
+    # from outside docs/solutions/ into the local corpus.
+    if not _SKILL_ID_RE.match(slug):
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "action": "invalid_slug",
+            "slug": slug,
+            "error": (
+                f"slug '{slug}' contains disallowed characters. Must match "
+                "[a-zA-Z0-9][a-zA-Z0-9_-]{0,63} (no slashes, dots, or path traversal)."
+            ),
+        }
 
     lesson_path = root / "docs" / "solutions" / f"{slug}.md"
     if not lesson_path.is_file():
@@ -185,9 +204,7 @@ def promote_lesson(
         from agentalloy.install.subcommands.install_pack import install_local_pack
 
         install_fn = install_local_pack
-    install_result = install_fn(
-        pack_dir, root=root, strict=True, allow_duplicates=allow_duplicates
-    )
+    install_result = install_fn(pack_dir, root=root, strict=True, allow_duplicates=allow_duplicates)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -196,7 +213,8 @@ def promote_lesson(
         "skill_id": gen["skill_id"],
         "pack_dir": str(pack_dir),
         "domain_tags": gen.get("domain_tags"),
-        "soft_or_forced_duplicates": sorted({getattr(h, "skill_id", "?") for h in hard_hits}) or None,
+        "soft_or_forced_duplicates": sorted({getattr(h, "skill_id", "?") for h in hard_hits})
+        or None,
         "install": install_result,
     }
 
@@ -226,7 +244,7 @@ def add_parser(
     )
     add_json_flag(pr)
     pr.set_defaults(func=_run_promote)
-    p.set_defaults(func=lambda _args: (p.print_help() or 1))
+    p.set_defaults(func=lambda _args: p.print_help() or 1)
 
 
 def _render_human(result: dict[str, Any]) -> None:
