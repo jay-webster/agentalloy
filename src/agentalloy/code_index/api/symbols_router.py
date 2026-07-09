@@ -9,13 +9,54 @@ otherwise swallow the literal suffix segments.
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agentalloy.code_index.api.deps import require_indexed_repo, with_handles
-from agentalloy.code_index.api.models import CallSiteView, SymbolView
+from agentalloy.code_index.api.models import CallSiteView, RationaleHitView, SymbolView
 from agentalloy.code_index.api.state import CodeIndexState, get_code_index_state
 
 router = APIRouter()
+
+
+@router.get(
+    "/symbols/{fqn:path}/rationale",
+    response_model=list[RationaleHitView],
+    summary="Promoted skills linked to fqn (symbol-linked-rationale) — [] if none",
+)
+async def symbol_rationale(
+    fqn: str,
+    repo: str = Query(description="Indexed repo slug"),
+    state: CodeIndexState = Depends(get_code_index_state),
+) -> list[RationaleHitView]:
+    # Registered before the bare /symbols/{fqn:path} route below, same reason
+    # /callers and /callees are — the greedy {fqn:path} converter would
+    # otherwise swallow this route's literal /rationale suffix.
+    #
+    # Unlike /callers, /callees, and the bare route, this handler's data lives
+    # in the SKILL corpus (agentalloy.duck), not the code graph — it never
+    # touches h.graph via with_handles. require_indexed_repo still applies: a
+    # rationale query is only meaningful for a repo that's actually indexed.
+    require_indexed_repo(state, repo)
+
+    def _read() -> list[RationaleHitView]:
+        from agentalloy.reads.rationale_links import rationale_for_symbol
+        from agentalloy.storage.open import open_skills
+
+        try:
+            store = open_skills(state.settings, read_only=True)
+        except Exception:
+            # No skill corpus at all yet (e.g. nothing has ever been
+            # promoted here) — "no link" is not an error (AC4).
+            return []
+        try:
+            hits = rationale_for_symbol(store, repo_slug=repo, qualified_name=fqn)
+        finally:
+            store.close()
+        return [RationaleHitView.from_hit(h) for h in hits]
+
+    return await asyncio.to_thread(_read)
 
 
 @router.get(

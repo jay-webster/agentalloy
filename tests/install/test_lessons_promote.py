@@ -48,10 +48,10 @@ def _embed(_text: str) -> list[float]:
     return [0.1, 0.2, 0.3]
 
 
-def _write_lesson(root: Path, slug: str) -> None:
+def _write_lesson(root: Path, slug: str, body: str = LESSON) -> None:
     p = root / "docs" / "solutions" / f"{slug}.md"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(LESSON, encoding="utf-8")
+    p.write_text(body, encoding="utf-8")
 
 
 # --- the probe in isolation ------------------------------------------------
@@ -225,3 +225,169 @@ def test_promote_registered_and_parses():
     assert args.slug == "my-slug"
     assert args.allow_duplicates is True
     assert callable(args.func)
+
+
+# --- symbol-linked-rationale wiring (task 03) -------------------------------
+
+LESSON_WITH_SYMBOLS = (
+    "# A lesson\n\n"
+    "Symbols: pkg.foo.Bar, pkg.baz\n\n"
+    "## Approach\n\nDo the thing that worked, carefully and in order, then confirm it.\n"
+)
+
+
+def _fake_install(pack_dir: Any, **_kw: Any) -> dict[str, Any]:
+    return {"action": "ingested", "dedup_exit_code": 0}
+
+
+def _seed_promoted_skill(store: Any, *, skill_id: str, rationale: str = "the reason") -> None:
+    """Mimic what a real install_local_pack run would have written for
+    `skill_id` — _fake_install is a no-op stub, so these tests seed the
+    minimal skills/skill_versions/fragments rows rationale_for_symbol's join
+    needs, using the same `store` handle promote_lesson linked against."""
+    version_id = f"{skill_id}-v1"
+    store.execute(
+        "INSERT INTO skills (skill_id, canonical_name, skill_class, category, "
+        "deprecated, current_version_id) VALUES (?,?,?,?,?,?)",
+        [skill_id, skill_id, "domain", "engineering", False, version_id],
+    )
+    store.execute(
+        "INSERT INTO skill_versions (version_id, skill_id, version_number, status, raw_prose) "
+        "VALUES (?,?,?,?,?)",
+        [version_id, skill_id, 1, "active", rationale],
+    )
+    store.execute(
+        "INSERT INTO fragments (fragment_id, version_id, fragment_type, sequence, content) "
+        "VALUES (?,?,?,?,?)",
+        [f"{skill_id}-f0", version_id, "rationale", 0, rationale],
+    )
+
+
+def test_resolving_symbols_create_link_rows(tmp_path: Path):
+    # T3.1 (AC1) — a real link row exists afterward, verified via task 01's
+    # own query function, not just "no error".
+    from agentalloy.code_index.slug import repo_slug as real_repo_slug
+    from agentalloy.reads.rationale_links import rationale_for_symbol
+    from agentalloy.storage.skill_store import open_skill_store
+
+    _write_lesson(tmp_path, "sym-lesson", body=LESSON_WITH_SYMBOLS)
+    store = open_skill_store(str(tmp_path / "agentalloy.duck"))
+    slug = real_repo_slug(tmp_path)
+
+    res = promote_lesson(
+        "sym-lesson",
+        root=tmp_path,
+        embed=_embed,
+        vector_store=_FakeStore([]),
+        install=_fake_install,
+        symbol_resolver=lambda repo, name: True,  # everything resolves
+        skill_store=store,
+    )
+    assert res["action"] == "promoted"
+    assert res["unresolved_symbols"] == []
+    _seed_promoted_skill(store, skill_id=res["skill_id"])
+
+    for name in ("pkg.foo.Bar", "pkg.baz"):
+        hits = rationale_for_symbol(store, repo_slug=slug, qualified_name=name)
+        assert [h.skill_id for h in hits] == [res["skill_id"]]
+    store.close()
+
+
+def test_unresolvable_symbol_reported_not_linked_promotion_still_succeeds(tmp_path: Path):
+    # T3.2 (AC2)
+    from agentalloy.code_index.slug import repo_slug as real_repo_slug
+    from agentalloy.reads.rationale_links import rationale_for_symbol
+    from agentalloy.storage.skill_store import open_skill_store
+
+    _write_lesson(tmp_path, "sym-lesson", body=LESSON_WITH_SYMBOLS)
+    store = open_skill_store(str(tmp_path / "agentalloy.duck"))
+    slug = real_repo_slug(tmp_path)
+
+    def _resolver(repo: str, name: str) -> bool:
+        return name == "pkg.foo.Bar"  # pkg.baz does not resolve
+
+    res = promote_lesson(
+        "sym-lesson",
+        root=tmp_path,
+        embed=_embed,
+        vector_store=_FakeStore([]),
+        install=_fake_install,
+        symbol_resolver=_resolver,
+        skill_store=store,
+    )
+    assert res["action"] == "promoted"
+    assert res["unresolved_symbols"] == ["pkg.baz"]
+    _seed_promoted_skill(store, skill_id=res["skill_id"])
+    assert rationale_for_symbol(store, repo_slug=slug, qualified_name="pkg.baz") == []
+    hits = rationale_for_symbol(store, repo_slug=slug, qualified_name="pkg.foo.Bar")
+    assert [h.skill_id for h in hits] == [res["skill_id"]]
+    store.close()
+
+
+def test_no_code_index_degrades_every_symbol_to_unresolved(tmp_path: Path, monkeypatch):
+    # T3.3 — patches the open_code_index import boundary rather than requiring
+    # a real tree_sitter install, same pattern the existing Piece 3 guard test
+    # already uses for this exact optional-dependency problem.
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise ModuleNotFoundError("no module named 'tree_sitter'")
+
+    monkeypatch.setattr("agentalloy.code_index.store.open.open_code_index", _boom)
+    _write_lesson(tmp_path, "sym-lesson", body=LESSON_WITH_SYMBOLS)
+
+    res = promote_lesson(
+        "sym-lesson",
+        root=tmp_path,
+        embed=_embed,
+        vector_store=_FakeStore([]),
+        install=_fake_install,
+        # no symbol_resolver override -> exercises the real _default_symbol_exists,
+        # which must degrade to False via the patched open_code_index, never raise.
+    )
+    assert res["action"] == "promoted"
+    assert res["unresolved_symbols"] == ["pkg.foo.Bar", "pkg.baz"]
+
+
+def test_lesson_with_no_symbols_line_is_unaffected(tmp_path: Path):
+    # Backward-compat guard: a plain lesson (no Symbols: line) behaves exactly
+    # as before this feature — empty unresolved list, no resolver/store touched.
+    _write_lesson(tmp_path, "plain-lesson")
+
+    def _resolver_should_not_be_called(repo: str, name: str) -> bool:
+        raise AssertionError("resolver must not be called when there is no Symbols: line")
+
+    res = promote_lesson(
+        "plain-lesson",
+        root=tmp_path,
+        embed=_embed,
+        vector_store=_FakeStore([]),
+        install=_fake_install,
+        symbol_resolver=_resolver_should_not_be_called,
+    )
+    assert res["action"] == "promoted"
+    assert res["unresolved_symbols"] == []
+
+
+def test_link_repo_slug_matches_code_index_slug_helper(tmp_path: Path):
+    # T3.4 (AC6) — the link's repo_slug is code_index.slug.repo_slug(root)'s
+    # actual output, not a guessed/hardcoded value.
+    from agentalloy.code_index.slug import repo_slug as real_repo_slug
+    from agentalloy.reads.rationale_links import rationale_for_symbol
+    from agentalloy.storage.skill_store import open_skill_store
+
+    _write_lesson(tmp_path, "sym-lesson", body=LESSON_WITH_SYMBOLS)
+    store = open_skill_store(str(tmp_path / "agentalloy.duck"))
+    expected_slug = real_repo_slug(tmp_path)
+
+    res = promote_lesson(
+        "sym-lesson",
+        root=tmp_path,
+        embed=_embed,
+        vector_store=_FakeStore([]),
+        install=_fake_install,
+        symbol_resolver=lambda repo, name: True,
+        skill_store=store,
+    )
+    _seed_promoted_skill(store, skill_id=res["skill_id"])
+    hits = rationale_for_symbol(store, repo_slug=expected_slug, qualified_name="pkg.foo.Bar")
+    assert [h.skill_id for h in hits] == [res["skill_id"]]
+    store.close()

@@ -89,6 +89,20 @@ CREATE TABLE IF NOT EXISTS corpus_meta (
     value      TEXT NOT NULL,
     updated_at BIGINT NOT NULL
 );
+
+-- symbol-linked-rationale: (repo_slug, qualified_name) -> skill_id. No FK — this
+-- store manages referential integrity in application code (see delete_skill's
+-- explicit cascade below), and qualified_name is owned by a separate per-repo
+-- DB (code_index's graph.duck), which this store never opens as a writer.
+CREATE TABLE IF NOT EXISTS symbol_rationale_links (
+    repo_slug      TEXT NOT NULL,
+    qualified_name TEXT NOT NULL,
+    skill_id       TEXT NOT NULL,
+    linked_at      TIMESTAMP NOT NULL,
+    PRIMARY KEY (repo_slug, qualified_name, skill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_symbol_links_lookup
+    ON symbol_rationale_links(repo_slug, qualified_name);
 """
 
 
@@ -243,6 +257,7 @@ class DuckDBSkillStore:
             "DELETE FROM skill_dependencies WHERE source_skill_id = ? OR target_skill_id = ?",
             [skill_id, skill_id],
         )
+        self.conn.execute("DELETE FROM symbol_rationale_links WHERE skill_id = ?", [skill_id])
         self.conn.execute("DELETE FROM skills WHERE skill_id = ?", [skill_id])
         return int(n or 0)
 

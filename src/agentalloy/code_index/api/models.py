@@ -10,6 +10,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from agentalloy.code_index.store import CodeIndexJob, IndexedRepo
+from agentalloy.reads.models import RationaleHit
 from agentalloy.storage.protocols import CallSite, CodeSymbol
 
 
@@ -161,3 +162,14 @@ class CentralitySymbol(BaseModel):
     pagerank: float
     file_path: str | None
     start_line: int | None
+
+
+class RationaleHitView(BaseModel):
+    """One promoted skill linked to the queried symbol (``/symbols/{fqn}/rationale``)."""
+
+    skill_id: str
+    rationale: str
+
+    @classmethod
+    def from_hit(cls, h: RationaleHit) -> RationaleHitView:
+        return cls(skill_id=h.skill_id, rationale=h.rationale)

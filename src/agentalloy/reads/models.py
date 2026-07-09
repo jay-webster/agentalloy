@@ -30,6 +30,14 @@ class ActiveSkill:
 
 
 @dataclass(frozen=True)
+class RationaleHit:
+    """One promoted skill linked to a queried code symbol (symbol-linked-rationale)."""
+
+    skill_id: str
+    rationale: str
+
+
+@dataclass(frozen=True)
 class ActiveFragment:
     fragment_id: str
     fragment_type: str

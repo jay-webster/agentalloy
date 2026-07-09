@@ -41,6 +41,7 @@ def test_build_router_mounts_expected_routes() -> None:
         "/code/symbols/{fqn:path}",
         "/code/symbols/{fqn:path}/callers",
         "/code/symbols/{fqn:path}/callees",
+        "/code/symbols/{fqn:path}/rationale",
         "/code/context-bundle",
     }
 

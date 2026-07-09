@@ -89,6 +89,63 @@ def test_delete_skill_cascade(store):
     assert store.scalar("SELECT count(*) FROM skill_dependencies") == 0
 
 
+def test_delete_skill_also_removes_symbol_rationale_links(store):
+    # symbol-linked-rationale T1.6 — belongs alongside the other cascade test.
+    store.execute(
+        "INSERT INTO symbol_rationale_links (repo_slug, qualified_name, skill_id, linked_at) "
+        "VALUES (?,?,?,CURRENT_TIMESTAMP)",
+        ["repo-a", "pkg.foo", "sk1"],
+    )
+    assert store.delete_skill("sk1") == 1
+    assert store.scalar("SELECT count(*) FROM symbol_rationale_links") == 0
+
+
+def test_existing_tables_unchanged_by_symbol_rationale_links_addition(store):
+    # symbol-linked-rationale T1.5 (AC5) — the new table is additive; every
+    # pre-existing table's column set is untouched (no ALTER anywhere).
+    expected = {
+        "skills": {
+            "skill_id",
+            "canonical_name",
+            "category",
+            "skill_class",
+            "domain_tags",
+            "deprecated",
+            "superseded_by",
+            "always_apply",
+            "phase_scope",
+            "category_scope",
+            "tier",
+            "description",
+            "current_version_id",
+        },
+        "skill_versions": {
+            "version_id",
+            "skill_id",
+            "version_number",
+            "authored_at",
+            "author",
+            "change_summary",
+            "status",
+            "raw_prose",
+        },
+        "fragments": {"fragment_id", "version_id", "fragment_type", "sequence", "content"},
+        "skill_dependencies": {"source_skill_id", "target_skill_id", "rel_type"},
+        "corpus_meta": {"key", "value", "updated_at"},
+    }
+    for table, cols in expected.items():
+        rows = store.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?", [table]
+        )
+        assert {r[0] for r in rows} == cols, table
+
+    new_cols = store.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'symbol_rationale_links'"
+    )
+    assert {r[0] for r in new_cols} == {"repo_slug", "qualified_name", "skill_id", "linked_at"}
+
+
 def test_rollback_batch(store):
     store.rollback_batch(["sk1", "missing"])  # soft-fail on missing
     assert store.scalar("SELECT count(*) FROM skills") == 0

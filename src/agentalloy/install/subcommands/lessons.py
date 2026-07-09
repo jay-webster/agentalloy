@@ -20,7 +20,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from agentalloy.install.lesson_pack import generate_lesson_pack
+from agentalloy.install.lesson_pack import (
+    _lesson_symbols,  # pyright: ignore[reportPrivateUsage]
+    generate_lesson_pack,
+)
 from agentalloy.install.output import add_json_flag, print_rich, write_result
 from agentalloy.install.subcommands.new_skill_pack import _SKILL_ID_RE
 
@@ -30,6 +33,38 @@ SCHEMA_VERSION = 1
 # a raw vector; a real store is a FragmentStore; a real install runs the rail.
 EmbedFn = Callable[[str], list[float]]
 InstallFn = Callable[..., dict[str, Any]]
+# symbol-linked-rationale: (repo_slug, qualified_name) -> does it exist in the
+# code index? A real resolver degrades to False on any failure (see
+# _default_symbol_exists); it never raises.
+SymbolResolverFn = Callable[[str, str], bool]
+
+
+def _default_symbol_exists(repo_slug: str, qualified_name: str) -> bool:
+    """Best-effort, read-only: does ``qualified_name`` exist in ``repo_slug``'s
+    code index?
+
+    Degrades to False — never raises — when the optional ``[code-index]``
+    extra isn't installed, the repo has never been indexed (``graph.duck``
+    doesn't exist yet; the store's own docstring says the reader role
+    "requires the graph file to already exist"), or any other resolution
+    failure occurs. A lesson promotion must never hard-fail because linking
+    couldn't happen. ``code_index.*`` is imported lazily here, never at this
+    module's top level — the package's own docstring: "nothing in this
+    package may be imported unless the [code-index] toggle is on."
+    """
+    try:
+        from agentalloy.code_index.store.open import open_code_index
+        from agentalloy.config import get_settings
+
+        handles = open_code_index(get_settings(), repo_slug, role="reader")
+    except Exception:
+        return False
+    try:
+        return handles.graph.symbol(qualified_name) is not None
+    except Exception:
+        return False
+    finally:
+        handles.close()
 
 
 def probe_lesson_duplicates(
@@ -89,12 +124,15 @@ def promote_lesson(
     embed: EmbedFn | None = None,
     vector_store: Any | None = None,
     install: InstallFn | None = None,
+    symbol_resolver: SymbolResolverFn | None = None,
+    skill_store: Any | None = None,
 ) -> dict[str, Any]:
     """Promote ``docs/solutions/<slug>.md`` into the corpus. Returns a result dict.
 
-    The ``embed`` / ``vector_store`` / ``install`` seams are injected in tests;
-    in production they resolve to the real embed client, the open fragment store,
-    and ``install_local_pack``.
+    The ``embed`` / ``vector_store`` / ``install`` / ``symbol_resolver`` /
+    ``skill_store`` seams are injected in tests; in production they resolve to
+    the real embed client, the open fragment store, ``install_local_pack``, a
+    read-only code-index symbol lookup, and the skill corpus store.
     """
     from agentalloy.config import get_settings
 
@@ -206,6 +244,46 @@ def promote_lesson(
         install_fn = install_local_pack
     install_result = install_fn(pack_dir, root=root, strict=True, allow_duplicates=allow_duplicates)
 
+    # --- symbol-linked-rationale: resolve + link named symbols -------------
+    # Additive only — a resolution/linking failure must never turn a
+    # successful promotion into a failed one (see design §4).
+    unresolved_symbols: list[str] = []
+    lesson_text = lesson_path.read_text(encoding="utf-8")
+    symbol_names = _lesson_symbols(lesson_text)
+    if symbol_names:
+        try:
+            from agentalloy.code_index.slug import repo_slug as derive_repo_slug
+
+            repo: str | None = derive_repo_slug(root)
+        except Exception:
+            repo = None
+
+        if repo is None:
+            unresolved_symbols = list(symbol_names)
+        else:
+            resolver = symbol_resolver or _default_symbol_exists
+            resolved: list[str] = []
+            for name in symbol_names:
+                (resolved if resolver(repo, name) else unresolved_symbols).append(name)
+
+            if resolved:
+                from agentalloy.reads.rationale_links import link_symbol
+
+                store_provided = skill_store is not None
+                store = skill_store
+                if store is None:
+                    from agentalloy.storage.open import open_skills
+
+                    store = open_skills(get_settings(), read_only=False)
+                try:
+                    for name in resolved:
+                        link_symbol(
+                            store, repo_slug=repo, qualified_name=name, skill_id=gen["skill_id"]
+                        )
+                finally:
+                    if not store_provided:
+                        store.close()
+
     return {
         "schema_version": SCHEMA_VERSION,
         "action": "promoted",
@@ -216,6 +294,7 @@ def promote_lesson(
         "soft_or_forced_duplicates": sorted({getattr(h, "skill_id", "?") for h in hard_hits})
         or None,
         "install": install_result,
+        "unresolved_symbols": unresolved_symbols,
     }
 
 
