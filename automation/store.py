@@ -7,6 +7,7 @@ tool that's actually correct here.
 
 from __future__ import annotations
 
+import datetime
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,22 @@ CREATE TABLE IF NOT EXISTS candidates (
 );
 """
 
+_NEW_COLUMNS = {
+    "verdict": "TEXT",
+    "rationale": "TEXT",
+    "evaluated_at": "TEXT",
+}
+
+VALID_VERDICTS = frozenset({"accept", "reject", "needs_review"})
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(candidates)")}
+    for name, sql_type in _NEW_COLUMNS.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE candidates ADD COLUMN {name} {sql_type}")
+    conn.commit()
+
 
 @dataclass(frozen=True)
 class Candidate:
@@ -37,6 +54,9 @@ class Candidate:
     snippet: str
     ingested_at: str
     status: str = "new"
+    verdict: str | None = None
+    rationale: str | None = None
+    evaluated_at: str | None = None
 
 
 class CandidateStore:
@@ -45,6 +65,7 @@ class CandidateStore:
         self._conn = sqlite3.connect(db_path)
         self._conn.execute(_SCHEMA_DDL)
         self._conn.commit()
+        _ensure_columns(self._conn)
 
     def add(self, candidate: Candidate) -> bool:
         cursor = self._conn.execute(
@@ -69,16 +90,17 @@ class CandidateStore:
         return cursor.rowcount > 0
 
     def list(self, status: str | None = None) -> list[Candidate]:
+        columns = (
+            "message_id, thread_id, source, subject, received_at, snippet, "
+            "status, ingested_at, verdict, rationale, evaluated_at"
+        )
         if status is None:
             rows = self._conn.execute(
-                "SELECT message_id, thread_id, source, subject, received_at, "
-                "snippet, status, ingested_at FROM candidates ORDER BY ingested_at"
+                f"SELECT {columns} FROM candidates ORDER BY ingested_at"
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT message_id, thread_id, source, subject, received_at, "
-                "snippet, status, ingested_at FROM candidates WHERE status = ? "
-                "ORDER BY ingested_at",
+                f"SELECT {columns} FROM candidates WHERE status = ? ORDER BY ingested_at",
                 (status,),
             ).fetchall()
         return [
@@ -91,6 +113,9 @@ class CandidateStore:
                 snippet=r[5],
                 status=r[6],
                 ingested_at=r[7],
+                verdict=r[8],
+                rationale=r[9],
+                evaluated_at=r[10],
             )
             for r in rows
         ]
@@ -99,6 +124,18 @@ class CandidateStore:
         cursor = self._conn.execute(
             "UPDATE candidates SET status = ? WHERE message_id = ?",
             (status, message_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def evaluate(self, message_id: str, verdict: str, rationale: str) -> bool:
+        if verdict not in VALID_VERDICTS:
+            raise ValueError(f"verdict must be one of {sorted(VALID_VERDICTS)}, got {verdict!r}")
+        evaluated_at = datetime.datetime.now(datetime.UTC).isoformat()
+        cursor = self._conn.execute(
+            "UPDATE candidates SET status = 'evaluated', verdict = ?, "
+            "rationale = ?, evaluated_at = ? WHERE message_id = ?",
+            (verdict, rationale, evaluated_at, message_id),
         )
         self._conn.commit()
         return cursor.rowcount > 0

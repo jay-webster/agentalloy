@@ -64,3 +64,49 @@ def test_mark_missing_message_id_reports_not_found_and_exits_nonzero(
     assert exit_code == 1
     err = capsys.readouterr().err
     assert "does-not-exist" in err
+
+
+def test_evaluate_then_list_shows_verdict_and_rationale(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli.main(ADD_ARGS)
+    capsys.readouterr()
+
+    exit_code = cli.main(
+        [
+            "ingest",
+            "evaluate",
+            "msg-1",
+            "--verdict",
+            "accept",
+            "--rationale",
+            "matches feature fit",
+        ]
+    )
+    assert exit_code == 0
+    capsys.readouterr()
+
+    cli.main(["ingest", "list", "--status", "evaluated"])
+    output = capsys.readouterr().out
+    assert "[accept] matches feature fit" in output
+
+
+def test_evaluate_invalid_verdict_rejected_by_argparse(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["ingest", "evaluate", "msg-1", "--verdict", "bogus", "--rationale", "x"])
+
+    assert exc_info.value.code != 0
+
+
+def test_list_status_new_output_format_unchanged(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli.main(ADD_ARGS)
+    capsys.readouterr()
+
+    cli.main(["ingest", "list", "--status", "new"])
+    output = capsys.readouterr().out
+
+    assert output.strip() == "msg-1\tnew\tsender@example.com\tAn AI thing"
