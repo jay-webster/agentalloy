@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import sys
 
 from automation.store import (
@@ -12,6 +14,15 @@ from automation.store import (
     CandidateStore,
     FlaggedCandidateError,
     NotAcceptedError,
+)
+
+_IMPORT_REQUIRED_FIELDS = (
+    "message_id",
+    "thread_id",
+    "source",
+    "subject",
+    "received_at",
+    "snippet",
 )
 
 
@@ -94,6 +105,44 @@ def _cmd_integrate(args: argparse.Namespace, store: CandidateStore) -> int:
     return 0
 
 
+def _cmd_import_jsonl(args: argparse.Namespace, store: CandidateStore) -> int:
+    added = 0
+    already_present = 0
+    skipped = 0
+    with open(args.path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                skipped += 1
+                continue
+            if not isinstance(row, dict) or not all(
+                field in row for field in _IMPORT_REQUIRED_FIELDS
+            ):
+                skipped += 1
+                continue
+            candidate = Candidate(
+                message_id=row["message_id"],
+                thread_id=row["thread_id"],
+                source=row["source"],
+                subject=row["subject"],
+                received_at=row["received_at"],
+                snippet=row["snippet"],
+                ingested_at=datetime.datetime.now(datetime.UTC).isoformat(),
+            )
+            if store.add(candidate):
+                added += 1
+            else:
+                already_present += 1
+    print(
+        f"imported {args.path}: {added} added, {already_present} already present, {skipped} skipped"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="automation")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -129,6 +178,12 @@ def build_parser() -> argparse.ArgumentParser:
     integrate_parser = ingest_sub.add_parser("integrate", help="Generate a draft SDD intake")
     integrate_parser.add_argument("message_id")
     integrate_parser.set_defaults(func=_cmd_integrate)
+
+    import_parser = ingest_sub.add_parser(
+        "import-jsonl", help="Import candidates from a JSONL file"
+    )
+    import_parser.add_argument("path")
+    import_parser.set_defaults(func=_cmd_import_jsonl)
 
     return parser
 
