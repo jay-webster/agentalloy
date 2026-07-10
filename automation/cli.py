@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from automation.store import VALID_VERDICTS, Candidate, CandidateStore
+from automation.store import VALID_VERDICTS, Candidate, CandidateStore, FlaggedCandidateError
 
 
 def _cmd_add(args: argparse.Namespace, store: CandidateStore) -> int:
@@ -35,6 +35,8 @@ def _cmd_list(args: argparse.Namespace, store: CandidateStore) -> int:
         line = f"{row.message_id}\t{row.status}\t{row.source}\t{row.subject}"
         if row.verdict is not None:
             line += f"\t[{row.verdict}] {row.rationale}"
+        if row.flagged:
+            line = f"[FLAGGED: {row.flag_reasons}] " + line
         print(line)
     return 0
 
@@ -49,7 +51,15 @@ def _cmd_mark(args: argparse.Namespace, store: CandidateStore) -> int:
 
 
 def _cmd_evaluate(args: argparse.Namespace, store: CandidateStore) -> int:
-    updated = store.evaluate(args.message_id, args.verdict, args.rationale)
+    try:
+        updated = store.evaluate(args.message_id, args.verdict, args.rationale)
+    except FlaggedCandidateError as exc:
+        print(
+            f"refused: {exc.message_id} is flagged ({exc.flag_reasons}) — "
+            "accept is blocked, use reject or needs_review",
+            file=sys.stderr,
+        )
+        return 1
     if not updated:
         print(f"no candidate with message_id {args.message_id}", file=sys.stderr)
         return 1
