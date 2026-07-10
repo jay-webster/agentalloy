@@ -1,0 +1,8 @@
+# Copy this file to sources.yaml (git-ignored, personal) and edit it with
+# your real newsletter senders. Each entry is a sender address or domain
+# that automation/routines/scan-newsletters.md will search Gmail for
+# (from:<entry>, OR-joined). One entry per line.
+
+- example-newsletter@substack.com
+- updates@example-ai-digest.com
+- news@example-labs.com
