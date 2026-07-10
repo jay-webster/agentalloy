@@ -12,6 +12,8 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from automation import injection_guard
+
 DEFAULT_DB_PATH = Path(".automation") / "candidates.db"
 
 _SCHEMA_DDL = """
@@ -31,9 +33,21 @@ _NEW_COLUMNS = {
     "verdict": "TEXT",
     "rationale": "TEXT",
     "evaluated_at": "TEXT",
+    "flagged": "INTEGER",
+    "flag_reasons": "TEXT",
 }
 
 VALID_VERDICTS = frozenset({"accept", "reject", "needs_review"})
+
+
+class FlaggedCandidateError(Exception):
+    def __init__(self, message_id: str, flag_reasons: str) -> None:
+        self.message_id = message_id
+        self.flag_reasons = flag_reasons
+        super().__init__(
+            f"{message_id} is flagged ({flag_reasons}) — accept is blocked, "
+            "use reject or needs_review"
+        )
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
@@ -57,6 +71,8 @@ class Candidate:
     verdict: str | None = None
     rationale: str | None = None
     evaluated_at: str | None = None
+    flagged: bool = False
+    flag_reasons: str = ""
 
 
 class CandidateStore:
@@ -68,11 +84,13 @@ class CandidateStore:
         _ensure_columns(self._conn)
 
     def add(self, candidate: Candidate) -> bool:
+        reasons = injection_guard.screen(f"{candidate.subject} {candidate.snippet}")
         cursor = self._conn.execute(
             """
             INSERT INTO candidates
-                (message_id, thread_id, source, subject, received_at, snippet, status, ingested_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (message_id, thread_id, source, subject, received_at, snippet, status,
+                 ingested_at, flagged, flag_reasons)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(message_id) DO NOTHING
             """,
             (
@@ -84,6 +102,8 @@ class CandidateStore:
                 candidate.snippet,
                 candidate.status,
                 candidate.ingested_at,
+                1 if reasons else 0,
+                ", ".join(reasons),
             ),
         )
         self._conn.commit()
@@ -92,7 +112,7 @@ class CandidateStore:
     def list(self, status: str | None = None) -> list[Candidate]:
         columns = (
             "message_id, thread_id, source, subject, received_at, snippet, "
-            "status, ingested_at, verdict, rationale, evaluated_at"
+            "status, ingested_at, verdict, rationale, evaluated_at, flagged, flag_reasons"
         )
         if status is None:
             rows = self._conn.execute(
@@ -116,6 +136,8 @@ class CandidateStore:
                 verdict=r[8],
                 rationale=r[9],
                 evaluated_at=r[10],
+                flagged=bool(r[11]),
+                flag_reasons=r[12] or "",
             )
             for r in rows
         ]
@@ -131,6 +153,13 @@ class CandidateStore:
     def evaluate(self, message_id: str, verdict: str, rationale: str) -> bool:
         if verdict not in VALID_VERDICTS:
             raise ValueError(f"verdict must be one of {sorted(VALID_VERDICTS)}, got {verdict!r}")
+        if verdict == "accept":
+            row = self._conn.execute(
+                "SELECT flagged, flag_reasons FROM candidates WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            if row is not None and row[0]:
+                raise FlaggedCandidateError(message_id, row[1] or "")
         evaluated_at = datetime.datetime.now(datetime.UTC).isoformat()
         cursor = self._conn.execute(
             "UPDATE candidates SET status = 'evaluated', verdict = ?, "
