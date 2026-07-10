@@ -5,7 +5,14 @@ from __future__ import annotations
 import argparse
 import sys
 
-from automation.store import VALID_VERDICTS, Candidate, CandidateStore, FlaggedCandidateError
+from automation.store import (
+    VALID_VERDICTS,
+    Candidate,
+    CandidateNotFoundError,
+    CandidateStore,
+    FlaggedCandidateError,
+    NotAcceptedError,
+)
 
 
 def _cmd_add(args: argparse.Namespace, store: CandidateStore) -> int:
@@ -67,6 +74,26 @@ def _cmd_evaluate(args: argparse.Namespace, store: CandidateStore) -> int:
     return 0
 
 
+def _cmd_integrate(args: argparse.Namespace, store: CandidateStore) -> int:
+    try:
+        result = store.integrate(args.message_id)
+    except CandidateNotFoundError:
+        print(f"no candidate with message_id {args.message_id}", file=sys.stderr)
+        return 1
+    except NotAcceptedError as exc:
+        print(
+            f"cannot integrate: {exc.message_id} has verdict {exc.verdict!r}, "
+            "only accept candidates can be integrated",
+            file=sys.stderr,
+        )
+        return 1
+    if result.already_existed:
+        print(f"already integrated, draft unchanged: {result.draft_path}")
+    else:
+        print(f"integrated {args.message_id}: draft written to {result.draft_path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="automation")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -98,6 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_parser.add_argument("--verdict", required=True, choices=sorted(VALID_VERDICTS))
     evaluate_parser.add_argument("--rationale", required=True)
     evaluate_parser.set_defaults(func=_cmd_evaluate)
+
+    integrate_parser = ingest_sub.add_parser("integrate", help="Generate a draft SDD intake")
+    integrate_parser.add_argument("message_id")
+    integrate_parser.set_defaults(func=_cmd_integrate)
 
     return parser
 

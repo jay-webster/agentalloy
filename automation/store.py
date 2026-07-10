@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from automation import injection_guard
+from automation import injection_guard, integrator
 
 DEFAULT_DB_PATH = Path(".automation") / "candidates.db"
 
@@ -35,9 +35,13 @@ _NEW_COLUMNS = {
     "evaluated_at": "TEXT",
     "flagged": "INTEGER",
     "flag_reasons": "TEXT",
+    "integrated_at": "TEXT",
+    "integration_slug": "TEXT",
 }
 
 VALID_VERDICTS = frozenset({"accept", "reject", "needs_review"})
+
+INTAKE_DRAFTS_DIR = Path("automation") / "intake-drafts"
 
 
 class FlaggedCandidateError(Exception):
@@ -48,6 +52,29 @@ class FlaggedCandidateError(Exception):
             f"{message_id} is flagged ({flag_reasons}) — accept is blocked, "
             "use reject or needs_review"
         )
+
+
+class NotAcceptedError(Exception):
+    def __init__(self, message_id: str, verdict: str | None) -> None:
+        self.message_id = message_id
+        self.verdict = verdict
+        super().__init__(
+            f"{message_id} cannot be integrated: verdict is {verdict!r}, "
+            "only accept candidates can be integrated"
+        )
+
+
+class CandidateNotFoundError(Exception):
+    def __init__(self, message_id: str) -> None:
+        self.message_id = message_id
+        super().__init__(f"no candidate with message_id {message_id}")
+
+
+@dataclass(frozen=True)
+class IntegrationResult:
+    slug: str
+    draft_path: Path
+    already_existed: bool
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
@@ -73,6 +100,8 @@ class Candidate:
     evaluated_at: str | None = None
     flagged: bool = False
     flag_reasons: str = ""
+    integrated_at: str | None = None
+    integration_slug: str | None = None
 
 
 class CandidateStore:
@@ -112,7 +141,8 @@ class CandidateStore:
     def list(self, status: str | None = None) -> list[Candidate]:
         columns = (
             "message_id, thread_id, source, subject, received_at, snippet, "
-            "status, ingested_at, verdict, rationale, evaluated_at, flagged, flag_reasons"
+            "status, ingested_at, verdict, rationale, evaluated_at, flagged, flag_reasons, "
+            "integrated_at, integration_slug"
         )
         if status is None:
             rows = self._conn.execute(
@@ -138,6 +168,8 @@ class CandidateStore:
                 evaluated_at=r[10],
                 flagged=bool(r[11]),
                 flag_reasons=r[12] or "",
+                integrated_at=r[13],
+                integration_slug=r[14],
             )
             for r in rows
         ]
@@ -168,6 +200,68 @@ class CandidateStore:
         )
         self._conn.commit()
         return cursor.rowcount > 0
+
+    def integrate(self, message_id: str) -> IntegrationResult:
+        row = self._conn.execute(
+            "SELECT verdict, integrated_at, integration_slug, thread_id, source, "
+            "subject, received_at, snippet, ingested_at, status, rationale, "
+            "evaluated_at, flagged, flag_reasons FROM candidates WHERE message_id = ?",
+            (message_id,),
+        ).fetchone()
+        if row is None:
+            raise CandidateNotFoundError(message_id)
+        (
+            verdict,
+            integrated_at,
+            integration_slug,
+            thread_id,
+            source,
+            subject,
+            received_at,
+            snippet,
+            ingested_at,
+            status,
+            rationale,
+            evaluated_at,
+            flagged,
+            flag_reasons,
+        ) = row
+        if verdict != "accept":
+            raise NotAcceptedError(message_id, verdict)
+        if integrated_at is not None:
+            return IntegrationResult(
+                slug=integration_slug,
+                draft_path=INTAKE_DRAFTS_DIR / f"{integration_slug}.md",
+                already_existed=True,
+            )
+
+        candidate = Candidate(
+            message_id=message_id,
+            thread_id=thread_id,
+            source=source,
+            subject=subject,
+            received_at=received_at,
+            snippet=snippet,
+            ingested_at=ingested_at,
+            status=status,
+            verdict=verdict,
+            rationale=rationale,
+            evaluated_at=evaluated_at,
+            flagged=bool(flagged),
+            flag_reasons=flag_reasons or "",
+        )
+        slug = integrator.slugify(subject, message_id)
+        draft_path = INTAKE_DRAFTS_DIR / f"{slug}.md"
+        draft_path.parent.mkdir(parents=True, exist_ok=True)
+        draft_path.write_text(integrator.render_draft(candidate, slug))
+
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        self._conn.execute(
+            "UPDATE candidates SET integrated_at = ?, integration_slug = ? WHERE message_id = ?",
+            (now, slug, message_id),
+        )
+        self._conn.commit()
+        return IntegrationResult(slug=slug, draft_path=draft_path, already_existed=False)
 
     def close(self) -> None:
         self._conn.close()
