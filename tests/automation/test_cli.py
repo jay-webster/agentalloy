@@ -155,3 +155,34 @@ def test_list_shows_flagged_prefix(capsys: pytest.CaptureFixture[str]) -> None:
     output = capsys.readouterr().out
 
     assert output.startswith("[FLAGGED:")
+
+
+def test_integrate_non_accept_candidate_refused(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli.main(ADD_ARGS)
+    capsys.readouterr()
+
+    exit_code = cli.main(["ingest", "integrate", "msg-1"])
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "msg-1" in err
+    assert "None" in err or "verdict" in err
+
+
+def test_integrate_twice_reports_already_integrated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli.main(ADD_ARGS)
+    cli.main(["ingest", "evaluate", "msg-1", "--verdict", "accept", "--rationale", "good fit"])
+    capsys.readouterr()
+
+    first_exit = cli.main(["ingest", "integrate", "msg-1"])
+    capsys.readouterr()
+    second_exit = cli.main(["ingest", "integrate", "msg-1"])
+    second_output = capsys.readouterr().out
+
+    assert first_exit == 0
+    assert second_exit == 0
+    assert "already integrated" in second_output

@@ -1,7 +1,13 @@
 from pathlib import Path
 
 import pytest
-from automation.store import Candidate, CandidateStore, FlaggedCandidateError
+from automation.store import (
+    Candidate,
+    CandidateNotFoundError,
+    CandidateStore,
+    FlaggedCandidateError,
+    NotAcceptedError,
+)
 
 
 @pytest.fixture
@@ -185,3 +191,68 @@ def test_unflagged_candidate_add_behavior_unchanged(store: CandidateStore) -> No
     [row] = store.list()
     assert row.flagged is False
     assert row.flag_reasons == ""
+
+
+def test_integrate_never_evaluated_raises_not_accepted(store: CandidateStore) -> None:
+    store.add(_candidate())
+
+    with pytest.raises(NotAcceptedError):
+        store.integrate("msg-1")
+
+    [row] = store.list()
+    assert row.integrated_at is None
+
+
+def test_integrate_rejected_candidate_raises_not_accepted(store: CandidateStore) -> None:
+    store.add(_candidate())
+    store.evaluate("msg-1", "reject", "not relevant")
+
+    with pytest.raises(NotAcceptedError):
+        store.integrate("msg-1")
+
+
+def test_integrate_needs_review_candidate_raises_not_accepted(store: CandidateStore) -> None:
+    store.add(_candidate())
+    store.evaluate("msg-1", "needs_review", "unclear")
+
+    with pytest.raises(NotAcceptedError):
+        store.integrate("msg-1")
+
+
+def test_integrate_is_idempotent_never_overwrites(
+    store: CandidateStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    store.add(_candidate())
+    store.evaluate("msg-1", "accept", "good fit")
+
+    first = store.integrate("msg-1")
+    first.draft_path.write_text("HUMAN EDITED THIS DRAFT")
+
+    second = store.integrate("msg-1")
+
+    assert second.already_existed is True
+    assert second.slug == first.slug
+    assert second.draft_path.read_text() == "HUMAN EDITED THIS DRAFT"
+
+
+def test_integrate_missing_candidate_raises(store: CandidateStore) -> None:
+    with pytest.raises(CandidateNotFoundError):
+        store.integrate("does-not-exist")
+
+
+def test_integrate_sets_integrated_at_and_slug(
+    store: CandidateStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    store.add(_candidate())
+    store.evaluate("msg-1", "accept", "good fit")
+
+    [before] = store.list()
+    assert before.integrated_at is None
+
+    store.integrate("msg-1")
+
+    [after] = store.list()
+    assert after.integrated_at is not None
+    assert after.integration_slug is not None

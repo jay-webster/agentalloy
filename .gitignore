@@ -140,3 +140,4 @@ corpus-seed/*
 # sources.example.yaml (the tracked template) is intentionally not matched here.
 .automation/
 automation/config/sources.yaml
+automation/intake-drafts/
