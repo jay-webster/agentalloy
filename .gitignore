@@ -135,3 +135,8 @@ MagicMock/
 # only the .keep marker is tracked.
 corpus-seed/*
 !corpus-seed/.keep
+
+# Automation pipeline: runtime DB and personal config are local, not tracked.
+# sources.example.yaml (the tracked template) is intentionally not matched here.
+.automation/
+automation/config/sources.yaml

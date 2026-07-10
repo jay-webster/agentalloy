@@ -82,7 +82,7 @@ artifacts = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "automation"]
 exclude = ["skill-source/", "fixtures/", "agents/", "agency-agents/", "vercel-labs-agent-skills/", "agent-skills/"]
 
 [tool.ruff.lint]
@@ -111,7 +111,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.pyright]
-include = ["src"]
+include = ["src", "automation"]
 # Authoring subpackage is being redesigned — exclude from strict typecheck
 # until the new approach lands. See the navistone fork divergence note in
 # the 0875b29 merge commit (authoring kept here, removed on nrmeyers).
@@ -138,7 +138,7 @@ venv = ".venv"
 minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config -m 'not integration and not container and not harness_e2e' -n auto --dist loadgroup"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 markers = [
     "integration: tests requiring a live LM Studio or other external service",
     "container: real-podman tests — slow and port-bound; excluded from the fast parallel default, run serially (`pytest -m container -n0`)",
