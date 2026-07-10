@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from automation.store import Candidate, CandidateStore
+from automation.store import VALID_VERDICTS, Candidate, CandidateStore
 
 
 def _cmd_add(args: argparse.Namespace, store: CandidateStore) -> int:
@@ -32,7 +32,10 @@ def _cmd_list(args: argparse.Namespace, store: CandidateStore) -> int:
         print("no candidates")
         return 0
     for row in rows:
-        print(f"{row.message_id}\t{row.status}\t{row.source}\t{row.subject}")
+        line = f"{row.message_id}\t{row.status}\t{row.source}\t{row.subject}"
+        if row.verdict is not None:
+            line += f"\t[{row.verdict}] {row.rationale}"
+        print(line)
     return 0
 
 
@@ -42,6 +45,15 @@ def _cmd_mark(args: argparse.Namespace, store: CandidateStore) -> int:
         print(f"no candidate with message_id {args.message_id}", file=sys.stderr)
         return 1
     print(f"marked {args.message_id} as {args.status}")
+    return 0
+
+
+def _cmd_evaluate(args: argparse.Namespace, store: CandidateStore) -> int:
+    updated = store.evaluate(args.message_id, args.verdict, args.rationale)
+    if not updated:
+        print(f"no candidate with message_id {args.message_id}", file=sys.stderr)
+        return 1
+    print(f"evaluated {args.message_id}: {args.verdict}")
     return 0
 
 
@@ -70,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
     mark_parser.add_argument("message_id")
     mark_parser.add_argument("status")
     mark_parser.set_defaults(func=_cmd_mark)
+
+    evaluate_parser = ingest_sub.add_parser("evaluate", help="Record a verdict")
+    evaluate_parser.add_argument("message_id")
+    evaluate_parser.add_argument("--verdict", required=True, choices=sorted(VALID_VERDICTS))
+    evaluate_parser.add_argument("--rationale", required=True)
+    evaluate_parser.set_defaults(func=_cmd_evaluate)
 
     return parser
 

@@ -64,3 +64,69 @@ def test_mark_missing_message_id_returns_false_not_an_exception(
     updated = store.mark("does-not-exist", "accepted")
 
     assert updated is False
+
+
+def test_reopening_store_does_not_raise_duplicate_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "candidates.db"
+    CandidateStore(db_path=db_path).close()
+    CandidateStore(db_path=db_path).close()
+
+
+def test_migration_preserves_existing_row_data(tmp_path: Path) -> None:
+    db_path = tmp_path / "candidates.db"
+    first = CandidateStore(db_path=db_path)
+    first.add(_candidate())
+    first.close()
+
+    reopened = CandidateStore(db_path=db_path)
+    [row] = reopened.list()
+
+    assert row.message_id == "msg-1"
+    assert row.subject == "An AI thing"
+    assert row.verdict is None
+    assert row.rationale is None
+    assert row.evaluated_at is None
+
+
+def test_evaluate_sets_verdict_rationale_status_and_timestamp(
+    store: CandidateStore,
+) -> None:
+    store.add(_candidate())
+
+    updated = store.evaluate("msg-1", "accept", "good fit")
+
+    assert updated is True
+    [row] = store.list()
+    assert row.status == "evaluated"
+    assert row.verdict == "accept"
+    assert row.rationale == "good fit"
+    assert row.evaluated_at is not None
+
+
+def test_reevaluating_overwrites_not_duplicates(store: CandidateStore) -> None:
+    store.add(_candidate())
+    store.evaluate("msg-1", "accept", "first pass")
+
+    store.evaluate("msg-1", "reject", "changed my mind")
+
+    assert len(store.list()) == 1
+    [row] = store.list()
+    assert row.verdict == "reject"
+    assert row.rationale == "changed my mind"
+
+
+def test_evaluate_missing_message_id_returns_false(store: CandidateStore) -> None:
+    updated = store.evaluate("does-not-exist", "accept", "x")
+
+    assert updated is False
+
+
+def test_evaluate_invalid_verdict_raises_before_any_write(store: CandidateStore) -> None:
+    store.add(_candidate())
+
+    with pytest.raises(ValueError, match="maybe"):
+        store.evaluate("msg-1", "maybe", "x")
+
+    [row] = store.list()
+    assert row.status == "new"
+    assert row.verdict is None
