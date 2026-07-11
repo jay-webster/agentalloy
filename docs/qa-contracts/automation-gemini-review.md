@@ -59,11 +59,27 @@
      **Fixed**: added `set -o pipefail`.
   After all three fixes, a real run correctly showed `review: fail` with
   the actual 429 diagnostic comment posted to the PR — the job's pass/fail
-  now genuinely reflects reality. The underlying 429 itself was not fixed
-  (retry/backoff is explicitly out of scope per the spec) — it recurred on
-  3 of 4 real attempts, succeeding once, suggesting Jay's key may be on a
-  tier with restrictive rate limits for `gemini-2.5-pro` specifically;
-  flagged to Jay directly, not solved here.
+  now genuinely reflects reality.
+- **Model switch, two more real findings.** Jay chose to switch off
+  `gemini-2.5-pro` (persistent 429s) rather than check his tier. First
+  attempt, `gemini-2.5-flash`, hit a live `404 Not Found` *despite being a
+  confirmed valid model* per this key's own `ListModels` response — cause
+  unclear, possibly transient, not chased further. Switched instead to
+  `gemini-flash-latest`, an alias that always resolves to Google's current
+  flash-tier model rather than a name that can go stale when Google cycles
+  versions (this repo now has direct, repeated evidence that pinned model
+  names are a real maintenance liability). This produced a **genuine
+  successful review** — Gemini approved, with two legitimate findings on
+  `gemini_review.py` itself: the API key was sent as a URL query parameter
+  (leak risk via logs/tracebacks) rather than the `x-goog-api-key` header,
+  and `format_comment`/`main()` used direct dict-key access that could
+  `KeyError` on a malformed model response. **Both fixed** (header-based
+  auth; `.get()` with fallbacks throughout), re-verified: a subsequent real
+  run hit a transient `HTTP 503: Service Unavailable` (Google's server
+  side, not this code) and the error-handling from bug #2 correctly
+  produced a diagnostic comment rather than failing silently — further
+  live confirmation that fix holds for a *different* real failure mode
+  than the one that originally motivated it.
 
 ## Review
 
@@ -124,20 +140,30 @@ still lands even though the review step itself exits non-zero.
   `dict` type annotations failed strict-mode pyright
   (`reportMissingTypeArgument`) — not caught until the typecheck step,
   fixed to `dict[str, Any]`.
-- **Not fixed, flagged for Jay**: the underlying Gemini `429` rate limit
-  itself. Recurred on 3 of 4 real attempts. Retry/backoff was explicitly
-  out of scope for this slice — but the recurrence rate suggests Jay's key
-  may be on a tier with real RPM/RPD limits for `gemini-2.5-pro`
-  specifically. Worth Jay's direct input: upgrade tier, or switch to a
-  higher-limit model (e.g. `gemini-2.5-flash`) for this use case.
+- **Resolved via Jay's own decision, not a code fix**: the `gemini-2.5-pro`
+  rate-limit question — Jay chose to switch models (`gemini-flash-latest`)
+  rather than investigate his API tier.
+- **Real findings from Gemini's own review of this code, both fixed**:
+  API-key-in-URL (now header-based), and unguarded dict-key access (now
+  `.get()`-based throughout).
+- **Not a code defect, expected and correctly handled**: a transient
+  `HTTP 503` on the final verification run — Google's server side, not
+  this repo's code. The error-handling built to survive the earlier 429
+  handled it identically, which is exactly the point of that fix.
 - **Dead code**: none.
 
 ## Verdict
 
-Clean. All 7 acceptance criteria met. AC7 in particular did exactly what a
-live proof is for: it found three real, otherwise-invisible bugs — one of
-which (the missing `pipefail`) would have silently defeated this entire
-check's purpose as a future auto-merge gate had it shipped unnoticed. All
-three fixed and re-verified live, in this same PR, before shipping. The
-one remaining open item (the 429 rate limit's root cause) is a real
-external-service question for Jay, not a code defect.
+Clean. All 7 acceptance criteria met. AC7 did exactly what a live proof is
+for — it found five real, otherwise-invisible issues across two rounds of
+live testing: three in the CI wiring itself (missing permissions, a silent
+crash, and a `pipefail` gap that would have silently defeated this check's
+entire purpose as a future auto-merge gate), and two more from Gemini's own
+real review of this file (a credential-handling improvement, a robustness
+improvement). All five fixed and re-verified live, in this same PR, before
+shipping. A model-naming surprise (`gemini-2.5-flash` 404ing despite being
+valid) was resolved by switching to a `-latest` alias rather than chasing
+the root cause — a pragmatic choice given two model-naming issues had
+already surfaced in one session. The final run's transient `503` is not a
+defect; it's further confirmation the error-handling holds for real
+external failures, not just the one that originally motivated it.
