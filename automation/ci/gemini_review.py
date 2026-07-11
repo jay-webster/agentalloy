@@ -13,7 +13,7 @@ import sys
 import urllib.request
 from typing import Any
 
-GEMINI_MODEL = "gemini-2.5-pro"
+GEMINI_MODEL = "gemini-2.5-flash"  # higher rate limits than 2.5-pro; see docs/solutions/automation-gemini-review.md
 GEMINI_ENDPOINT = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 )
