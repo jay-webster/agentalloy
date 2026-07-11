@@ -143,6 +143,49 @@ def _cmd_import_jsonl(args: argparse.Namespace, store: CandidateStore) -> int:
     return 0
 
 
+def _format_candidate(c: Candidate) -> str:
+    return f"- {c.message_id} | {c.source} | {c.subject}\n  {c.rationale}"
+
+
+def _cmd_report(args: argparse.Namespace, store: CandidateStore) -> int:
+    rows = [c for c in store.list() if c.evaluated_at and c.evaluated_at >= args.since]
+
+    if not rows:
+        print(f"Automation run digest — no candidates evaluated since {args.since}.")
+        return 0
+
+    accepted = [c for c in rows if c.verdict == "accept"]
+    needs_review = [c for c in rows if c.verdict == "needs_review"]
+    rejected = [c for c in rows if c.verdict == "reject"]
+    flagged = [c for c in rows if c.flagged]
+
+    print(
+        f"Automation run digest — {len(rows)} evaluated "
+        f"({len(accepted)} accept, {len(needs_review)} needs_review, {len(rejected)} reject)"
+    )
+
+    if not accepted and not needs_review:
+        print(f"Nothing needs your attention — {len(rejected)} rejected.")
+        if flagged:
+            print(f"{len(flagged)} candidate(s) flagged by the injection guard this run.")
+        return 0
+
+    if accepted:
+        print("\nACCEPT:")
+        for c in accepted:
+            print(_format_candidate(c))
+
+    if needs_review:
+        print("\nNEEDS REVIEW:")
+        for c in needs_review:
+            print(_format_candidate(c))
+
+    if flagged:
+        print(f"\n{len(flagged)} candidate(s) flagged by the injection guard this run.")
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="automation")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -184,6 +227,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_parser.add_argument("path")
     import_parser.set_defaults(func=_cmd_import_jsonl)
+
+    report_parser = ingest_sub.add_parser("report", help="Digest of recently evaluated candidates")
+    report_parser.add_argument("--since", required=True)
+    report_parser.set_defaults(func=_cmd_report)
 
     return parser
 

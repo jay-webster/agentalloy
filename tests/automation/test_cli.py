@@ -1,3 +1,4 @@
+import datetime
 from pathlib import Path
 
 import pytest
@@ -317,3 +318,114 @@ def test_import_jsonl_summary_counts_are_accurate(
     assert "2 added" in output
     assert "1 already present" in output
     assert "1 skipped" in output
+
+
+def _add_and_evaluate(message_id: str, verdict: str, rationale: str) -> None:
+    cli.main(
+        [
+            "ingest",
+            "add",
+            "--message-id",
+            message_id,
+            "--thread-id",
+            f"thread-{message_id}",
+            "--source",
+            "sender@example.com",
+            "--subject",
+            f"Subject for {message_id}",
+            "--received-at",
+            "2026-07-11T09:00:00Z",
+            "--snippet",
+            "Snippet text.",
+            "--ingested-at",
+            "2026-07-11T09:00:00Z",
+        ]
+    )
+    cli.main(["ingest", "evaluate", message_id, "--verdict", verdict, "--rationale", rationale])
+
+
+def test_report_filters_by_since(capsys: pytest.CaptureFixture[str]) -> None:
+    _add_and_evaluate("msg-before", "needs_review", "evaluated before the cutoff")
+    capsys.readouterr()
+
+    cutoff = datetime.datetime.now(datetime.UTC).isoformat()
+
+    _add_and_evaluate("msg-after", "needs_review", "evaluated after the cutoff")
+    capsys.readouterr()
+
+    cli.main(["ingest", "report", "--since", cutoff])
+    output = capsys.readouterr().out
+
+    assert "msg-after" in output
+    assert "msg-before" not in output
+
+
+def test_report_verdict_tiered_detail(capsys: pytest.CaptureFixture[str]) -> None:
+    cutoff = datetime.datetime.now(datetime.UTC).isoformat()
+    _add_and_evaluate("msg-accept", "accept", "clear feature fit")
+    _add_and_evaluate("msg-review", "needs_review", "unclear fit")
+    _add_and_evaluate("msg-reject", "reject", "not relevant")
+    capsys.readouterr()
+
+    cli.main(["ingest", "report", "--since", cutoff])
+    output = capsys.readouterr().out
+
+    assert "msg-accept" in output
+    assert "clear feature fit" in output
+    assert "msg-review" in output
+    assert "unclear fit" in output
+    assert "msg-reject" not in output
+    assert "not relevant" not in output
+    assert "1 reject" in output
+
+
+def test_report_empty_window_is_short(capsys: pytest.CaptureFixture[str]) -> None:
+    _add_and_evaluate("msg-old", "reject", "old")
+    capsys.readouterr()
+
+    future = "2099-01-01T00:00:00Z"
+    cli.main(["ingest", "report", "--since", future])
+    output = capsys.readouterr().out
+
+    assert "no candidates evaluated" in output
+    assert "msg-old" not in output
+
+
+def test_report_all_rejected_window_is_short(capsys: pytest.CaptureFixture[str]) -> None:
+    cutoff = datetime.datetime.now(datetime.UTC).isoformat()
+    _add_and_evaluate("msg-r1", "reject", "not relevant")
+    _add_and_evaluate("msg-r2", "reject", "also not relevant")
+    capsys.readouterr()
+
+    cli.main(["ingest", "report", "--since", cutoff])
+    output = capsys.readouterr().out
+
+    assert "Nothing needs your attention" in output
+    assert "2 rejected" in output
+    assert "ACCEPT:" not in output
+    assert "NEEDS REVIEW:" not in output
+
+
+def test_report_flagged_mention_present_when_applicable(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cutoff = datetime.datetime.now(datetime.UTC).isoformat()
+    cli.main(FLAGGED_ADD_ARGS)
+    cli.main(["ingest", "evaluate", "msg-flagged", "--verdict", "needs_review", "--rationale", "x"])
+    capsys.readouterr()
+
+    cli.main(["ingest", "report", "--since", cutoff])
+    output = capsys.readouterr().out
+
+    assert "flagged by the injection guard" in output
+
+
+def test_report_flagged_mention_absent_when_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    cutoff = datetime.datetime.now(datetime.UTC).isoformat()
+    _add_and_evaluate("msg-clean", "needs_review", "no flags here")
+    capsys.readouterr()
+
+    cli.main(["ingest", "report", "--since", cutoff])
+    output = capsys.readouterr().out
+
+    assert "flagged" not in output

@@ -18,7 +18,9 @@ here.
 
 Search Drive for `agentalloy-automation-newsletter-export.jsonl`. If
 found, download it to a local path. If not found, there is nothing new to
-import — skip to step 5.
+import — skip step 3 and continue to step 4 anyway (it will simply find no
+`status=new` candidates, and step 5's report will correctly say so — this
+still confirms to Jay that the routine ran).
 
 ## 3. Import
 
@@ -31,16 +33,45 @@ prior run — `add()` is idempotent by `message_id`.
 
 ## 4. Evaluate
 
-Follow `automation/routines/evaluate-candidate.md` (unchanged, referenced
-here rather than duplicated) against `uv run python -m automation.cli
-ingest list --status new`.
+Before running any evaluation, capture the current time:
 
-## 5. Upload the candidate store back to Drive
+```
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+```
+
+Then follow `automation/routines/evaluate-candidate.md` (unchanged,
+referenced here rather than duplicated) against `uv run python -m
+automation.cli ingest list --status new`.
+
+## 5. Report to Discord
+
+Run:
+
+```
+uv run python -m automation.cli ingest report --since "$SINCE"
+```
+
+POST its output to the Discord webhook URL configured for this routine
+(never committed to this repo — the real URL lives only in the live
+routine's own configuration):
+
+```
+jq -n --arg content "$(uv run python -m automation.cli ingest report --since "$SINCE")" '{content: $content}' \
+  | curl -X POST -H "Content-Type: application/json" -d @- "<DISCORD_WEBHOOK_URL>"
+```
+
+The `jq -n --arg` step correctly JSON-escapes the digest text (newlines,
+quotes) — don't hand-build the JSON payload string directly.
+
+## 6. Upload the candidate store back to Drive
 
 Upload `.automation/candidates.db`, overwriting
 `agentalloy-automation-candidates.db` in Drive. This is the only step that
-matters for state to persist into the next scheduled run — if this step is
-skipped, everything done in steps 1-4 is lost.
+matters for the *database* state to persist into the next scheduled run —
+if it's skipped, the next run re-downloads the old Drive copy and repeats
+this run's import/evaluate work (harmlessly, since both are idempotent).
+The Discord notification in step 5 has already been sent by this point
+regardless of whether this step succeeds.
 
 ## Notes
 
