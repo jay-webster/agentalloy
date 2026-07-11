@@ -59,6 +59,13 @@
   there and would resurface the moment that script ever needs to import
   a shared `automation.*` helper. Worth a follow-up if that file is
   touched again.
+- **Incidental real confirmation of the `high`-path no-op (not the formal
+  AC6 live proof, but genuine corroborating evidence):** this PR's own
+  diff (touching `automation/ci/` and `.github/workflows/`) is itself
+  high-risk per the classifier. The second live run's log shows
+  `Classified: high`, and `gate: pass` with no `gh pr merge` call
+  attempted — the workflow correctly took no action on its own real,
+  unplanned high-risk PR.
 - **Settings checkpoint (AC4)**: **not yet reached.** Per approach.md §6
   and build task 45, this is an explicit checkpoint after this PR merges,
   not part of build/ship. No branch-protection or `allow_auto_merge`
