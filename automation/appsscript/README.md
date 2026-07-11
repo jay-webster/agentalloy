@@ -32,12 +32,26 @@ the full context.
 
 ## What it does each run
 
-- Searches Gmail for messages from your allowlisted senders that aren't
-  already labeled `agentalloy-automation-exported`.
+- Searches Gmail for messages from your allowlisted senders, from the last
+  `LOOKBACK_DAYS` days (30 by default), that aren't already labeled
+  `agentalloy-automation-exported`.
 - Appends one JSON line per matching message to
   `agentalloy-automation-newsletter-export.jsonl` in your Drive (creating
   it on first run).
 - Labels each processed message so it isn't re-exported next run.
+
+**Note on `LOOKBACK_DAYS`**: this is a hard backstop, not the primary dedup
+mechanism (the label is). It exists because an unbounded first run has no
+label history to exclude anything — confirmed in practice, a first run
+without this bound exported 485 messages spanning almost two years. If you
+change your sender allowlist later, a newly-added sender's history is still
+bounded to the last `LOOKBACK_DAYS` days on its first appearance, not its
+entire mailbox history.
+
+**If you deployed before this bound was added**: re-paste the updated
+`newsletter-export.gs` into your existing script project (Apps Script
+editor → replace the file contents → save). No new OAuth consent is
+needed for this change.
 
 ## Field contract
 

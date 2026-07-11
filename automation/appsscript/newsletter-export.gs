@@ -29,6 +29,15 @@ var EXPORTED_LABEL_NAME = 'agentalloy-automation-exported';
 var EXPORT_FILENAME = 'agentalloy-automation-newsletter-export.jsonl';
 var SNIPPET_MAX_CHARS = 500;
 
+// Bounds every search to the last N days, regardless of the dedup label.
+// Without this, a first run (nothing labeled yet), a label reset, or a
+// newly-added sender can sweep a Gmail account's entire matching history
+// in one run — confirmed in practice: an unbounded first run exported 485
+// messages spanning nearly two years. The label is still the primary
+// dedup mechanism for normal operation; this is a hard backstop on top of
+// it, not a replacement.
+var LOOKBACK_DAYS = 30;
+
 function exportNewsletters() {
   var label = GmailApp.getUserLabelByName(EXPORTED_LABEL_NAME) ||
     GmailApp.createLabel(EXPORTED_LABEL_NAME);
@@ -36,7 +45,8 @@ function exportNewsletters() {
   var fromClauses = SENDER_ALLOWLIST.map(function (addr) {
     return 'from:' + addr;
   });
-  var query = 'in:inbox {' + fromClauses.join(' ') + '} -label:' + EXPORTED_LABEL_NAME;
+  var query = 'in:inbox {' + fromClauses.join(' ') + '} -label:' + EXPORTED_LABEL_NAME +
+    ' newer_than:' + LOOKBACK_DAYS + 'd';
 
   var threads = GmailApp.search(query);
   if (threads.length === 0) {
