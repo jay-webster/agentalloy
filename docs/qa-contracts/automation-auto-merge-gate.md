@@ -32,6 +32,33 @@
   `set -o pipefail` is the first line of the `run:` block — the exact
   false-positive-pass lesson from `gemini-review.yml`'s round-1 bug,
   likewise applied preemptively.
+- **Live proof of the workflow itself (real, found and fixed): the very
+  first real CI run of this PR's own `gate` job failed with
+  `ModuleNotFoundError: No module named 'automation'`.** Root cause:
+  `uv run python automation/ci/auto_merge_gate.py` (invocation by file
+  path) sets `sys.path[0]` to the script's own containing directory
+  (`automation/ci/`), not the repo root — so `from automation.risk_classifier
+  import classify` couldn't resolve. This was invisible to every prior
+  test: `pytest`'s own config (`pyproject.toml`'s `pythonpath = ["src",
+  "."]`) adds the repo root to `sys.path` for test runs, which is a
+  different resolution mechanism than a real shell invocation gets. This
+  is also the first script in `automation/ci/` to import from elsewhere in
+  the `automation` package — `gemini_review.py` never hit this because it
+  has zero cross-package imports, not because its invocation style was
+  actually safe. **Fixed**: changed the workflow to invoke
+  `uv run python -m automation.ci.auto_merge_gate` (module invocation,
+  which puts the current working directory — the repo root, since `uv
+  run` executes from there — on `sys.path`), matching the convention
+  every other real invocation in this repo already uses (`automation/routines/*.md`
+  all call `python -m automation.cli ...`, never by file path). Verified
+  both locally (`echo path | uv run python -m automation.ci.auto_merge_gate`
+  for both a `low` and a `high` case) and via a second live CI run.
+  **Noted, not fixed here (out of scope for this PR):** `gemini-review.yml`
+  still invokes its script by file path — currently harmless since that
+  script has no cross-package import, but the same latent gap exists
+  there and would resurface the moment that script ever needs to import
+  a shared `automation.*` helper. Worth a follow-up if that file is
+  touched again.
 - **Settings checkpoint (AC4)**: **not yet reached.** Per approach.md §6
   and build task 45, this is an explicit checkpoint after this PR merges,
   not part of build/ship. No branch-protection or `allow_auto_merge`

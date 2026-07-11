@@ -42,7 +42,7 @@ jobs:
         run: |
           set -o pipefail
           git diff --name-only "origin/$BASE_REF"...HEAD > /tmp/changed_paths.txt
-          risk=$(uv run python automation/ci/auto_merge_gate.py < /tmp/changed_paths.txt)
+          risk=$(uv run python -m automation.ci.auto_merge_gate < /tmp/changed_paths.txt)
           echo "Classified: $risk"
           if [ "$risk" = "low" ]; then
             gh pr merge "${{ github.event.pull_request.number }}" --auto --squash
