@@ -108,6 +108,36 @@
   case for finding #2, a missing-env-var case for finding #1; finding #3 is
   workflow YAML with no direct unit test, verified by code review and the
   next live run), and re-verified via a subsequent real run.
+- **Fourth live review pass, two more real findings, both fixed; then a
+  transient timeout; then a clean approve on re-run.** The round-3-fixed
+  code triggered a fourth real Gemini review, which returned
+  `request_changes` with two new findings:
+  1. **Minor (security)**: the workflow spliced
+     `github.event.pull_request.base.ref` directly into a shell `run:`
+     block via GHA expression interpolation — a real script-injection risk
+     if a branch name ever contained shell metacharacters. **Fixed**:
+     passed through an env var (`BASE_REF`) instead, referenced as
+     `$BASE_REF`, matching how `PR_TITLE`/`PR_BODY` were already handled.
+  2. **Minor (robustness)**: `call_gemini` indexed
+     `data["candidates"][0]` directly; a safety-filtered response can
+     return an empty `candidates` list, producing an unhelpful
+     `IndexError`. **Fixed**: raises a `ValueError` naming the cause
+     instead. (Already caught by round 3's try/except in `main()` either
+     way — this fix only improves the diagnostic's clarity, not the
+     crash-safety, which round 3 had already covered.)
+  Both fixed, covered with a new unit test for the empty-candidates case
+  (the `BASE_REF` fix is workflow YAML with no direct unit test, verified
+  by code review and the next live run). The immediate re-run then hit a
+  transient `HTTP read timeout` — Google's network side, not a code
+  defect, and further live confirmation the round-1/round-3 error-handling
+  correctly reports failure rather than passing silently on a *different*
+  real failure mode again. A second re-run produced a **clean `approve`**,
+  with one further **non-blocking minor suggestion** noted but not acted
+  on in this slice: on PRs from forks, `GEMINI_API_KEY` is unavailable
+  (fork PRs can't see repo secrets) and the check would fail rather than
+  skip gracefully. Logged as a known follow-up, not fixed here — it's a
+  design question about desired behavior on forks (skip vs. fail loud),
+  not a defect, and the verdict was already `approve`.
 
 ## Review
 
@@ -130,10 +160,13 @@
    `integrator.py`, `risk_classifier.py` all have zero diff.
 6. **API key never appears in conversation or committed files — MET.**
    See Checks.
-7. **Live proof — MET, after 3 real bugs found and fixed in the process**
-   (see Checks). The job's pass/fail now genuinely reflects the review
-   script's real outcome — verified by watching it correctly flip from a
-   false-positive pass to an honest failure once `pipefail` was added.
+7. **Live proof — MET, after 10 real findings found and fixed across four
+   rounds of live testing** (see Checks). The job's pass/fail now
+   genuinely reflects the review script's real outcome — verified
+   repeatedly: flipping from a false-positive pass to an honest failure
+   once `pipefail` was added, and correctly reporting failure (not a
+   silent pass) on two separate real transient network errors (`503`,
+   read timeout) unrelated to any code defect.
 
 ### Non-goals respected
 
@@ -184,28 +217,54 @@ still lands even though the review step itself exits non-zero.
   conversational text (minor), workflow comment-post step not guarding for
   a missing review file (minor). See "Third live review pass" in Checks
   above.
+- **Real findings from Gemini's fourth live review of this code, both
+  fixed**: `base.ref` shell-injection risk in the workflow (minor,
+  security), unguarded `candidates[0]` indexing on a possibly
+  safety-filtered response (minor, robustness — already crash-safe via
+  round 3's fix, this only sharpens the diagnostic). See "Fourth live
+  review pass" in Checks above.
+- **Not a code defect, expected and correctly handled**: a transient
+  `HTTP read timeout` on the round-4 re-verification run — Google's
+  network side, not this repo's code. A second re-run produced a clean
+  `approve`. Same category as the earlier `503` — further confirmation
+  the error-handling holds across multiple, different real transient
+  failure modes.
+- **Deferred, not a defect**: Gemini's fourth review also suggested the
+  check should skip gracefully (exit 0) rather than fail when
+  `GEMINI_API_KEY` is unavailable on fork PRs. Noted as a real design
+  question for a future slice, not acted on here — this repo has no fork
+  contributors yet, the verdict was already `approve`, and "what should
+  happen on a fork PR" is a policy decision (skip vs. fail loud) rather
+  than a bug.
 - **Dead code**: none.
 
 ## Verdict
 
 Clean. All 7 acceptance criteria met. AC7 did exactly what a live proof is
-for — it found eight real, otherwise-invisible issues across three rounds of
+for — it found ten real, otherwise-invisible issues across four rounds of
 live testing: three in the CI wiring itself (missing permissions, a silent
 crash, and a `pipefail` gap that would have silently defeated this check's
-entire purpose as a future auto-merge gate), two more from Gemini's own
-second real review of this file (a credential-handling improvement, a
-robustness improvement), and three more from Gemini's third real review (a
-silent-crash regression of the round-1 fix, a fence-stripping edge case,
-and a workflow guard for a missing review file). All eight fixed and
-re-verified live, in this same PR, before shipping. A model-naming surprise
-(`gemini-2.5-flash` 404ing despite being valid) was resolved by switching
-to a `-latest` alias rather than chasing the root cause — a pragmatic
-choice given two model-naming issues had already surfaced in one session.
-An earlier run's transient `503` was not a defect; it was further
-confirmation the error-handling holds for real external failures, not just
-the one that originally motivated it. The recurrence of the round-1
-env-var-crash pattern in round 3 (reintroduced by the header/`.get()` fix
-edit) is itself useful evidence for why this check exists as a standing
-CI gate rather than a one-time review: even careful, iterative fixing can
-reintroduce a previously-caught class of bug, and an independent
-different-model review catches it again on the next pass.
+entire purpose as a future auto-merge gate), two from Gemini's second real
+review of this file (a credential-handling improvement, a robustness
+improvement), three from Gemini's third real review (a silent-crash
+regression of the round-1 fix, a fence-stripping edge case, and a workflow
+guard for a missing review file), and two from Gemini's fourth real review
+(a shell-injection risk in the workflow, an unguarded response-indexing
+edge case). All ten fixed and re-verified live, in this same PR, before
+shipping. The check now sits on a clean `approve` after re-running past a
+transient network timeout. A model-naming surprise (`gemini-2.5-flash`
+404ing despite being valid) was resolved by switching to a `-latest` alias
+rather than chasing the root cause — a pragmatic choice given two
+model-naming issues had already surfaced in one session. Two separate
+transient network errors (`503`, then a read timeout) were not defects;
+both were further confirmation the error-handling holds for real external
+failures, not just the one that originally motivated it. The recurrence of
+the round-1 env-var-crash pattern in round 3 (reintroduced by the
+header/`.get()` fix edit) is itself useful evidence for why this check
+exists as a standing CI gate rather than a one-time review: even careful,
+iterative fixing can reintroduce a previously-caught class of bug, and an
+independent different-model review catches it again on the next pass. One
+non-blocking design question was surfaced and deliberately deferred rather
+than fixed: whether the check should skip gracefully on fork PRs lacking
+`GEMINI_API_KEY` rather than fail loud — a policy decision for a future
+slice, not a defect in this one.

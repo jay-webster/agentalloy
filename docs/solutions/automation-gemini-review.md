@@ -35,13 +35,17 @@ pedantic, but running the real gate caught it before it could compound.
 
 **Using the feature to review its own source, repeatedly.** Once the
 workflow was live, every real push re-triggered Gemini reviewing
-`gemini_review.py` and `gemini-review.yml` themselves. This produced three
+`gemini_review.py` and `gemini-review.yml` themselves. This produced four
 separate rounds of genuine, non-obvious findings (API key in URL vs.
-header; unguarded dict access; and later, env-var reads outside the
-try/except, a fence-stripping edge case, and a missing-file guard in the
-workflow) — the single strongest piece of evidence in this whole session
-that different-model review actually catches things same-model review
-plausibly wouldn't.
+header; unguarded dict access; env-var reads outside the try/except; a
+fence-stripping edge case; a missing-file guard in the workflow; a
+`base.ref` shell-injection risk; an unguarded response-indexing edge case)
+— the single strongest piece of evidence in this whole session that
+different-model review actually catches things same-model review plausibly
+wouldn't. It also caught its own kind of false alarm twice (a transient
+`503`, then a transient read timeout) — real evidence the check fails loud
+on genuine transient errors rather than silently passing, which is exactly
+what you want from a gate, even though neither was an actual code defect.
 
 ## What didn't work / had to be corrected
 
@@ -64,6 +68,16 @@ plausibly wouldn't.
   already hardened against a specific failure mode needs a re-check that
   the hardening still covers the whole function, not just a diff-local
   review of the new lines.
+- **A GHA expression was interpolated directly into a shell `run:` block.**
+  `git diff "origin/${{ github.event.pull_request.base.ref }}"...HEAD`
+  spliced an untrusted-ish value straight into a shell command string — a
+  real (if here low-probability, since `base.ref` is the target repo's own
+  branch) script-injection pattern GitHub explicitly warns against.
+  `PR_TITLE`/`PR_BODY` were already passed as env vars from the start, but
+  `base.ref` slipped through because it lives in a different line of the
+  same step. Lesson: when a workflow step takes *any* GHA expression, audit
+  the whole step for other expressions used the same unsafe way, not just
+  the one under discussion.
 
 ## Decisions worth keeping
 
@@ -88,3 +102,14 @@ plausibly wouldn't.
   Before trusting any new CI gate's pass/fail as meaningful, deliberately
   force a real failure through it once and confirm the job actually goes
   red.
+- Never interpolate a GHA expression directly into a shell `run:` string —
+  always pass it through `env:` and reference it as a shell variable, even
+  for values that look low-risk (a branch name, not user free text).
+  Consistency here is cheaper than judging each expression's risk
+  individually.
+- Not every real finding needs to be fixed in the same PR. A genuine,
+  non-blocking design question (should this check skip or fail on fork
+  PRs missing secrets?) is worth logging and deferring rather than
+  expanding scope indefinitely chasing a fully clean review — especially
+  once the verdict is already `approve` and the remaining note is a policy
+  choice, not a defect.
