@@ -13,7 +13,12 @@ import sys
 import urllib.request
 from typing import Any
 
-GEMINI_MODEL = "gemini-2.5-flash"  # higher rate limits than 2.5-pro; see docs/solutions/automation-gemini-review.md
+GEMINI_MODEL = "gemini-flash-latest"  # alias for the current flash-tier model -- avoids
+# repinning to a dated model name every time Google cycles versions (confirmed
+# 2026-07-11: gemini-2.5-flash returned a live 404 despite being a valid model
+# per this key's own ListModels response -- an alias sidesteps that class of
+# failure going forward). Higher rate limits than *-pro; see docs/solutions/
+# automation-gemini-review.md.
 GEMINI_ENDPOINT = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 )
