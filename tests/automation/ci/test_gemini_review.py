@@ -1,4 +1,5 @@
 import io
+import json
 
 import pytest
 
@@ -59,6 +60,48 @@ def test_format_comment_request_changes_with_finding() -> None:
     assert "critical" in comment
     assert "x.py" in comment
     assert "bug" in comment
+
+
+def test_format_comment_missing_fields_does_not_raise() -> None:
+    comment = gemini_review.format_comment({})
+
+    assert "Changes requested" in comment
+    assert "no summary provided" in comment
+
+
+def test_format_comment_finding_missing_fields_does_not_raise() -> None:
+    comment = gemini_review.format_comment(
+        {"verdict": "request_changes", "summary": "s", "findings": [{}]}
+    )
+
+    assert "unknown" in comment
+    assert "no description" in comment
+
+
+def test_call_gemini_sends_key_as_header_not_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}).encode()
+
+    def _fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["headers"] = {k.lower(): v for k, v in req.headers.items()}
+        return _FakeResponse()
+
+    monkeypatch.setattr(gemini_review.urllib.request, "urlopen", _fake_urlopen)
+
+    gemini_review.call_gemini("prompt", "secret-key-value")
+
+    assert "secret-key-value" not in captured["url"]
+    assert captured["headers"].get("X-goog-api-key".lower()) == "secret-key-value"
 
 
 def test_main_returns_zero_for_approve(

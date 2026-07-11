@@ -54,23 +54,35 @@ def parse_response(raw_text: str) -> dict[str, Any]:
 
 
 def format_comment(review: dict[str, Any]) -> str:
-    verdict_label = "✅ Approved" if review["verdict"] == "approve" else "⚠️ Changes requested"
-    lines = [f"## Gemini Review — {verdict_label}", "", review["summary"]]
+    # .get() with fallbacks throughout: a real finding from this feature's
+    # own first live-tested Gemini review -- direct key access would raise
+    # KeyError if a future response ever deviates from the requested schema.
+    verdict = review.get("verdict", "request_changes")
+    verdict_label = "✅ Approved" if verdict == "approve" else "⚠️ Changes requested"
+    summary = review.get("summary", "(no summary provided)")
+    lines = [f"## Gemini Review — {verdict_label}", "", summary]
     findings = review.get("findings") or []
     if findings:
         lines.append("")
         lines.append("### Findings")
         for f in findings:
-            lines.append(f"- **[{f['severity']}]** `{f['file']}`: {f['description']}")
+            severity = f.get("severity", "unknown")
+            file = f.get("file", "?")
+            description = f.get("description", "(no description)")
+            lines.append(f"- **[{severity}]** `{file}`: {description}")
     return "\n".join(lines)
 
 
 def call_gemini(prompt: str, api_key: str) -> str:
+    # The key goes in a header, not the URL query string -- a URL is far more
+    # likely to end up echoed in logs, proxies, or error tracebacks than a
+    # header value (a real finding from this feature's own first live-tested
+    # Gemini review, on this exact file).
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode()
     req = urllib.request.Request(
-        f"{GEMINI_ENDPOINT}?key={api_key}",
+        GEMINI_ENDPOINT,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
@@ -93,7 +105,7 @@ def main() -> int:
         return 1
 
     print(format_comment(review))
-    return 0 if review["verdict"] == "approve" else 1
+    return 0 if review.get("verdict") == "approve" else 1
 
 
 if __name__ == "__main__":
