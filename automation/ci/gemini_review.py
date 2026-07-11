@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.request
 from typing import Any
@@ -41,12 +42,18 @@ def build_prompt(title: str, description: str, diff: str) -> str:
     return _PROMPT_TEMPLATE.format(title=title, description=description, diff=diff)
 
 
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+
 def parse_response(raw_text: str) -> dict[str, Any]:
     text = raw_text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[len("json") :]
+    # A real finding from this feature's own review of itself: only
+    # stripping a fence when the response starts with it misses any
+    # leading conversational text before the fence. Search for a fenced
+    # block anywhere; fall back to the raw text if there isn't one.
+    fence_match = _FENCE_RE.search(text)
+    if fence_match:
+        text = fence_match.group(1)
     try:
         return json.loads(text.strip())
     except json.JSONDecodeError as exc:
@@ -91,13 +98,18 @@ def call_gemini(prompt: str, api_key: str) -> str:
 
 
 def main() -> int:
-    title = os.environ["PR_TITLE"]
-    description = os.environ.get("PR_BODY", "")
-    diff = sys.stdin.read()
-    api_key = os.environ["GEMINI_API_KEY"]
-
-    prompt = build_prompt(title, description, diff)
+    # Everything is inside the try, not just the network call: a real
+    # finding from this feature's own live review of itself -- reading
+    # GEMINI_API_KEY/PR_TITLE outside the guard meant a missing env var
+    # (e.g. secrets unavailable on a fork PR) would KeyError before the
+    # "always leave a diagnostic comment" guarantee ever engaged.
     try:
+        title = os.environ["PR_TITLE"]
+        description = os.environ.get("PR_BODY", "")
+        diff = sys.stdin.read()
+        api_key = os.environ["GEMINI_API_KEY"]
+
+        prompt = build_prompt(title, description, diff)
         raw = call_gemini(prompt, api_key)
         review = parse_response(raw)
     except Exception as exc:  # noqa: BLE001 -- must never leave the PR with no comment at all

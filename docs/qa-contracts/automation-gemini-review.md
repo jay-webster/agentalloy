@@ -80,6 +80,34 @@
   produced a diagnostic comment rather than failing silently — further
   live confirmation that fix holds for a *different* real failure mode
   than the one that originally motivated it.
+- **Third live review pass, three more real findings, all fixed.** After
+  the header/`.get()` fixes above, another real Gemini review of this same
+  file (now running on the `-latest` alias) returned `request_changes`
+  with three genuine findings:
+  1. **Major**: `main()` read `os.environ["PR_TITLE"]` and
+     `os.environ["GEMINI_API_KEY"]` *outside* the try/except block. A
+     missing env var (e.g. secrets unavailable on a fork PR) would raise
+     `KeyError` before the "always leave a diagnostic comment" guarantee
+     ever engaged — the exact same class of silent-crash bug as round 1's
+     bug #2, reintroduced by a later edit. **Fixed**: moved all of
+     `main()`'s body (env reads, prompt build, the Gemini call, parsing)
+     inside the existing try block.
+  2. **Minor**: `parse_response`'s fence-stripping used `.startswith("```")`,
+     so any leading conversational text before a fenced block (e.g. "Sure,
+     here is the review:" before the fence) skipped the strip entirely and
+     broke JSON parsing. **Fixed**: replaced with a `re.search` over a
+     `_FENCE_RE` pattern that finds a fenced block anywhere in the text,
+     falling back to the raw text if none is found.
+  3. **Minor**: the workflow's "Post review comment" step (`if: always()`)
+     would itself fail if `/tmp/review.md` was never created — e.g. if
+     checkout or `uv` setup failed before the review step ran at all.
+     **Fixed**: wrapped `gh pr comment` in a bash `if [ -f /tmp/review.md ]`
+     guard, printing a diagnostic instead of failing when the file is
+     absent.
+  All three fixed, covered with new unit tests (a fence-with-leading-text
+  case for finding #2, a missing-env-var case for finding #1; finding #3 is
+  workflow YAML with no direct unit test, verified by code review and the
+  next live run), and re-verified via a subsequent real run.
 
 ## Review
 
@@ -147,23 +175,37 @@ still lands even though the review step itself exits non-zero.
   API-key-in-URL (now header-based), and unguarded dict-key access (now
   `.get()`-based throughout).
 - **Not a code defect, expected and correctly handled**: a transient
-  `HTTP 503` on the final verification run — Google's server side, not
+  `HTTP 503` on an earlier verification run — Google's server side, not
   this repo's code. The error-handling built to survive the earlier 429
   handled it identically, which is exactly the point of that fix.
+- **Real findings from Gemini's third live review of this code, all three
+  fixed**: env-var reads outside the try/except (major, silent-crash
+  regression of round 1's bug #2), fence-stripping missing leading
+  conversational text (minor), workflow comment-post step not guarding for
+  a missing review file (minor). See "Third live review pass" in Checks
+  above.
 - **Dead code**: none.
 
 ## Verdict
 
 Clean. All 7 acceptance criteria met. AC7 did exactly what a live proof is
-for — it found five real, otherwise-invisible issues across two rounds of
+for — it found eight real, otherwise-invisible issues across three rounds of
 live testing: three in the CI wiring itself (missing permissions, a silent
 crash, and a `pipefail` gap that would have silently defeated this check's
-entire purpose as a future auto-merge gate), and two more from Gemini's own
-real review of this file (a credential-handling improvement, a robustness
-improvement). All five fixed and re-verified live, in this same PR, before
-shipping. A model-naming surprise (`gemini-2.5-flash` 404ing despite being
-valid) was resolved by switching to a `-latest` alias rather than chasing
-the root cause — a pragmatic choice given two model-naming issues had
-already surfaced in one session. The final run's transient `503` is not a
-defect; it's further confirmation the error-handling holds for real
-external failures, not just the one that originally motivated it.
+entire purpose as a future auto-merge gate), two more from Gemini's own
+second real review of this file (a credential-handling improvement, a
+robustness improvement), and three more from Gemini's third real review (a
+silent-crash regression of the round-1 fix, a fence-stripping edge case,
+and a workflow guard for a missing review file). All eight fixed and
+re-verified live, in this same PR, before shipping. A model-naming surprise
+(`gemini-2.5-flash` 404ing despite being valid) was resolved by switching
+to a `-latest` alias rather than chasing the root cause — a pragmatic
+choice given two model-naming issues had already surfaced in one session.
+An earlier run's transient `503` was not a defect; it was further
+confirmation the error-handling holds for real external failures, not just
+the one that originally motivated it. The recurrence of the round-1
+env-var-crash pattern in round 3 (reintroduced by the header/`.get()` fix
+edit) is itself useful evidence for why this check exists as a standing
+CI gate rather than a one-time review: even careful, iterative fixing can
+reintroduce a previously-caught class of bug, and an independent
+different-model review catches it again on the next pass.

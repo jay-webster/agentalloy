@@ -33,10 +33,37 @@ skipping it because "it's just two dict annotations."** Bare `dict` return
 types failed `reportMissingTypeArgument` — an easy thing to wave off as
 pedantic, but running the real gate caught it before it could compound.
 
+**Using the feature to review its own source, repeatedly.** Once the
+workflow was live, every real push re-triggered Gemini reviewing
+`gemini_review.py` and `gemini-review.yml` themselves. This produced three
+separate rounds of genuine, non-obvious findings (API key in URL vs.
+header; unguarded dict access; and later, env-var reads outside the
+try/except, a fence-stripping edge case, and a missing-file guard in the
+workflow) — the single strongest piece of evidence in this whole session
+that different-model review actually catches things same-model review
+plausibly wouldn't.
+
 ## What didn't work / had to be corrected
 
-The bare-`dict` type annotation gap (see above) — caught by the tool doing
-its job, not a process failure.
+- The bare-`dict` type annotation gap (see above) — caught by the tool
+  doing its job, not a process failure.
+- **A `pipefail`-less `tee` produced a false-positive pass while the
+  script was actually crashing.** `python script.py | tee file` reports
+  `tee`'s exit code (always 0), not the script's. This would have silently
+  defeated the entire point of the check as a future auto-merge gate — a
+  broken reviewer would report "pass" forever. Any CI step piping a
+  script's output through `tee` (or any second command) needs
+  `set -o pipefail` as a first line, unconditionally.
+- **A later fix reintroduced an earlier-fixed bug class.** Round 1 fixed a
+  silent crash by wrapping `call_gemini` in try/except. Round 2's edit
+  (switching the API key to a header) touched `main()` again and, in the
+  process, left the env-var reads (`os.environ["PR_TITLE"]`,
+  `os.environ["GEMINI_API_KEY"]`) sitting *outside* the try block — the
+  exact same silent-crash shape as the original bug, just relocated.
+  Round 3's live review caught it. Lesson: a fix that touches a function
+  already hardened against a specific failure mode needs a re-check that
+  the hardening still covers the whole function, not just a diff-local
+  review of the new lines.
 
 ## Decisions worth keeping
 
@@ -52,3 +79,12 @@ its job, not a process failure.
 - The pure-functions-plus-one-isolated-impure-call shape, once it's worked
   three or four times running, is worth reaching for by default on the
   next external integration rather than re-deriving the split each time.
+- Prefer a `-latest`/stable model alias over a dated, pinned model name for
+  anything long-running — a pinned name going stale (404ing despite being
+  listed as valid) is now a repeated, confirmed failure mode, not a
+  one-off.
+- A check whose own job status can be silently wrong (the `pipefail` bug)
+  is worse than no check at all, because it creates false confidence.
+  Before trusting any new CI gate's pass/fail as meaningful, deliberately
+  force a real failure through it once and confirm the job actually goes
+  red.

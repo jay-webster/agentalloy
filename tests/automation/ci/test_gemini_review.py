@@ -36,6 +36,17 @@ def test_parse_response_malformed_raises_value_error_with_raw_text() -> None:
         gemini_review.parse_response("not json at all")
 
 
+def test_parse_response_fenced_json_with_leading_conversational_text() -> None:
+    raw = (
+        "Sure, here is the review:\n```json\n"
+        '{"verdict": "approve", "summary": "ok", "findings": []}\n```'
+    )
+
+    result = gemini_review.parse_response(raw)
+
+    assert result == {"verdict": "approve", "summary": "ok", "findings": []}
+
+
 def test_format_comment_approve_no_findings() -> None:
     comment = gemini_review.format_comment(
         {"verdict": "approve", "summary": "looks good", "findings": []}
@@ -160,3 +171,19 @@ def test_main_still_produces_output_when_call_gemini_raises(
     assert exit_code != 0
     assert output.strip() != ""
     assert "429" in output
+
+
+def test_main_still_produces_output_when_env_var_missing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("PR_TITLE", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("PR_BODY", "d")
+    monkeypatch.setattr("sys.stdin", io.StringIO("diff text"))
+
+    exit_code = gemini_review.main()
+    output = capsys.readouterr().out
+
+    assert exit_code != 0
+    assert output.strip() != ""
+    assert "PR_TITLE" in output
