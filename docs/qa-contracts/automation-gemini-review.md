@@ -30,15 +30,40 @@
   references `secrets.GEMINI_API_KEY` only; the script reads
   `os.environ["GEMINI_API_KEY"]` only. No key value has appeared in this
   session's conversation or any file at any point.
-- **Live proof (AC7)**: **not yet completed.** Blocked on confirming
-  `GEMINI_API_KEY` is actually set as a repository secret (Jay's own
-  action, via a command this session provided but did not execute with a
-  real value) and on confirming GitHub Actions itself is fully enabled on
-  this fork — a separate, still-open finding from earlier tonight (zero
-  workflow runs observed even after a fresh push, despite Actions showing
-  enabled at the API level; a fork-specific "enable workflows" banner in
-  the Actions tab may still need to be clicked through). This QA report
-  will be updated once both are confirmed and a real run is inspected.
+- **Live proof (AC7): completed, and it found three real bugs this PR
+  then fixed live.** Once Jay set the secret, granted the `workflow`
+  OAuth scope, and confirmed GitHub Actions on the fork, this PR's own
+  pushes triggered real runs — the first-ever real CI execution on this
+  fork. In order:
+  1. `gh pr comment` failed (`GraphQL: Resource not accessible by
+     integration`) — the workflow had no `permissions:` block, so the
+     default `GITHUB_TOKEN` lacked `pull-requests: write`. **Fixed**:
+     added an explicit permissions block.
+  2. The Gemini call hit a real `HTTP Error 429: Too Many Requests` (real
+     evidence the key is valid and being read — a bad key 401s/403s, not
+     429s). The script had no error handling around `call_gemini`, so it
+     crashed with an unhandled traceback, produced no output, and the
+     downstream comment-post then failed too on an empty file (`Body
+     cannot be blank`) — a double failure with zero visible diagnostic in
+     the PR. **Fixed**: wrapped the call in try/except; any failure now
+     prints a diagnostic and exits non-zero, so a failure is always
+     visible, never silent.
+  3. **The most important bug**: after fix #2, a run showed `review: pass`
+     even though its own printed output was
+     `"Review failed... 429"` — the workflow piped the script through
+     `tee` (`python ... | tee /tmp/review.md`) without `set -o pipefail`,
+     so bash reported the pipeline's exit code as `tee`'s (always 0), not
+     the script's real one. This was a **false-positive pass** that would
+     have completely defeated the check's purpose as a future auto-merge
+     gate — a broken review would have silently reported success forever.
+     **Fixed**: added `set -o pipefail`.
+  After all three fixes, a real run correctly showed `review: fail` with
+  the actual 429 diagnostic comment posted to the PR — the job's pass/fail
+  now genuinely reflects reality. The underlying 429 itself was not fixed
+  (retry/backoff is explicitly out of scope per the spec) — it recurred on
+  3 of 4 real attempts, succeeding once, suggesting Jay's key may be on a
+  tier with restrictive rate limits for `gemini-2.5-pro` specifically;
+  flagged to Jay directly, not solved here.
 
 ## Review
 
@@ -61,14 +86,10 @@
    `integrator.py`, `risk_classifier.py` all have zero diff.
 6. **API key never appears in conversation or committed files — MET.**
    See Checks.
-7. **Live proof — NOT YET MET.** Honestly incomplete, named directly, not
-   glossed over — same treatment as slice 5's Apps Script deployment and
-   slice 6's webhook delivery. Two real external dependencies stand
-   between this and a completed live proof: Jay setting the secret, and
-   confirming GitHub Actions genuinely runs on this fork (still an open
-   question as of this report — a fresh push earlier tonight produced zero
-   workflow runs despite Actions showing enabled at the repo-permissions
-   API level).
+7. **Live proof — MET, after 3 real bugs found and fixed in the process**
+   (see Checks). The job's pass/fail now genuinely reflects the review
+   script's real outcome — verified by watching it correctly flip from a
+   false-positive pass to an honest failure once `pipefail` was added.
 
 ### Non-goals respected
 
@@ -90,23 +111,33 @@ still lands even though the review step itself exits non-zero.
 
 ### Findings
 
-- **Required**: none in the shipped code.
-- **Critical**: none.
-- **Real gap, caught during build, fixed before this QA pass**: bare
+- **Required, found and fixed during the live-proof pass**: the three bugs
+  in the "Live proof" checks section above (`permissions` block missing;
+  unhandled exception producing no diagnostic; `pipefail` missing causing
+  a false-positive pass). All three are exactly the kind of thing that
+  cannot be caught without a real execution — none were visible from code
+  review or the unit test suite, which is precisely why AC7's live-proof
+  requirement existed. All three fixed and re-verified within this same
+  PR before this QA pass was finalized.
+- **Critical**: none remaining.
+- **Real gap, caught during build, fixed before the live-proof pass**: bare
   `dict` type annotations failed strict-mode pyright
   (`reportMissingTypeArgument`) — not caught until the typecheck step,
-  fixed to `dict[str, Any]`. Worth noting for future Python additions to
-  this pack: this repo's strict mode is stricter about generic type
-  arguments than some codebases default to.
-- **Nit**: AC7 (live proof) is genuinely incomplete, pending two external
-  dependencies outside this session's control.
+  fixed to `dict[str, Any]`.
+- **Not fixed, flagged for Jay**: the underlying Gemini `429` rate limit
+  itself. Recurred on 3 of 4 real attempts. Retry/backoff was explicitly
+  out of scope for this slice — but the recurrence rate suggests Jay's key
+  may be on a tier with real RPM/RPD limits for `gemini-2.5-pro`
+  specifically. Worth Jay's direct input: upgrade tier, or switch to a
+  higher-limit model (e.g. `gemini-2.5-flash`) for this use case.
 - **Dead code**: none.
 
 ## Verdict
 
-Clean for the testable half — 6 of 7 acceptance criteria fully met. AC7
-is honestly incomplete, blocked on Jay's action (setting the secret) and
-on resolving whether GitHub Actions is fully enabled on this fork (a
-separate, still-open question from earlier tonight). Ready to route to
-ship for the code; live proof follows once both external dependencies
-resolve.
+Clean. All 7 acceptance criteria met. AC7 in particular did exactly what a
+live proof is for: it found three real, otherwise-invisible bugs — one of
+which (the missing `pipefail`) would have silently defeated this entire
+check's purpose as a future auto-merge gate had it shipped unnoticed. All
+three fixed and re-verified live, in this same PR, before shipping. The
+one remaining open item (the 429 rate limit's root cause) is a real
+external-service question for Jay, not a code defect.
