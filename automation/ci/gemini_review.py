@@ -80,8 +80,12 @@ def main() -> int:
     api_key = os.environ["GEMINI_API_KEY"]
 
     prompt = build_prompt(title, description, diff)
-    raw = call_gemini(prompt, api_key)
-    review = parse_response(raw)
+    try:
+        raw = call_gemini(prompt, api_key)
+        review = parse_response(raw)
+    except Exception as exc:  # noqa: BLE001 -- must never leave the PR with no comment at all
+        print(f"## Gemini Review — ⚠️ Review failed\n\nCould not complete: {exc}")
+        return 1
 
     print(format_comment(review))
     return 0 if review["verdict"] == "approve" else 1

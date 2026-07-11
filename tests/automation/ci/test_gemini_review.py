@@ -96,3 +96,24 @@ def test_main_returns_nonzero_for_request_changes(monkeypatch: pytest.MonkeyPatc
     exit_code = gemini_review.main()
 
     assert exit_code != 0
+
+
+def test_main_still_produces_output_when_call_gemini_raises(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("PR_TITLE", "t")
+    monkeypatch.setenv("PR_BODY", "d")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    monkeypatch.setattr("sys.stdin", io.StringIO("diff text"))
+
+    def _raise(prompt: str, api_key: str) -> str:
+        raise RuntimeError("HTTP Error 429: Too Many Requests")
+
+    monkeypatch.setattr(gemini_review, "call_gemini", _raise)
+
+    exit_code = gemini_review.main()
+    output = capsys.readouterr().out
+
+    assert exit_code != 0
+    assert output.strip() != ""
+    assert "429" in output
