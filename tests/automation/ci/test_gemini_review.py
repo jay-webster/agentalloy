@@ -115,6 +115,27 @@ def test_call_gemini_sends_key_as_header_not_url(monkeypatch: pytest.MonkeyPatch
     assert captured["headers"].get("X-goog-api-key".lower()) == "secret-key-value"
 
 
+def test_call_gemini_raises_value_error_when_candidates_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({"candidates": []}).encode()
+
+    monkeypatch.setattr(
+        gemini_review.urllib.request, "urlopen", lambda req, timeout=None: _FakeResponse()
+    )
+
+    with pytest.raises(ValueError, match="no candidates"):
+        gemini_review.call_gemini("prompt", "secret-key-value")
+
+
 def test_main_returns_zero_for_approve(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

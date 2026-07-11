@@ -94,7 +94,10 @@ def call_gemini(prompt: str, api_key: str) -> str:
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
         data = json.loads(resp.read())
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise ValueError(f"Gemini response had no candidates (possibly safety-filtered): {data!r}")
+    return candidates[0]["content"]["parts"][0]["text"]
 
 
 def main() -> int:

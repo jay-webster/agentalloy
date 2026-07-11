@@ -45,9 +45,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -o pipefail
-          git diff "origin/${{ github.event.pull_request.base.ref }}"...HEAD > /tmp/diff.txt
+          git diff "origin/$BASE_REF"...HEAD > /tmp/diff.txt
           uv run python automation/ci/gemini_review.py < /tmp/diff.txt | tee /tmp/review.md
 
       - name: Post review comment
