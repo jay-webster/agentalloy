@@ -1,0 +1,49 @@
+name: Auto Merge Gate
+
+# Enables GitHub's native auto-merge on a PR when its real diff classifies
+# `low` risk (automation/risk_classifier.py) -- e.g. corpus/skill content
+# and docs. High-risk PRs are untouched by this workflow entirely; GitHub's
+# own required-status-checks (branch protection) is what actually gates
+# any merge, auto or manual -- this workflow only decides whether a human
+# needs to be in the loop at all.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: auto-merge-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write # gh pr merge --auto
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Classify risk and enable auto-merge if low
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -o pipefail
+          git diff --name-only "origin/$BASE_REF"...HEAD > /tmp/changed_paths.txt
+          risk=$(uv run python automation/ci/auto_merge_gate.py < /tmp/changed_paths.txt)
+          echo "Classified: $risk"
+          if [ "$risk" = "low" ]; then
+            gh pr merge "${{ github.event.pull_request.number }}" --auto --squash
+          fi
