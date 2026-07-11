@@ -1,0 +1,63 @@
+name: Gemini Review
+
+# Independent second opinion on every PR diff, deliberately from a
+# different model family than whatever wrote the code -- reduces the
+# correlated blind spots a same-model self-review would share with its own
+# output. Posts a comment either way; the job's own pass/fail reflects
+# Gemini's verdict (approve vs request_changes), so it can later be added
+# to branch protection's required checks once proven reliable.
+#
+# GEMINI_API_KEY is a repository secret, never referenced as a literal
+# value anywhere in this file or logged -- GitHub redacts secret values
+# from workflow logs automatically.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: gemini-review-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write # gh pr comment
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Run Gemini review
+        id: review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -o pipefail
+          git diff "origin/$BASE_REF"...HEAD > /tmp/diff.txt
+          uv run python automation/ci/gemini_review.py < /tmp/diff.txt | tee /tmp/review.md
+
+      - name: Post review comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f /tmp/review.md ]; then
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/review.md
+          else
+            echo "No review output to post (an earlier step failed before it could be written)."
+          fi
