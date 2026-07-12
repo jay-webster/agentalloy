@@ -43,7 +43,7 @@ Then follow `automation/routines/evaluate-candidate.md` (unchanged,
 referenced here rather than duplicated) against `uv run python -m
 automation.cli ingest list --status new`.
 
-## 5. Report to Discord
+## 5. Report to Discord (best-effort — never blocks step 6)
 
 Run:
 
@@ -63,15 +63,28 @@ jq -n --arg content "$(uv run python -m automation.cli ingest report --since "$S
 The `jq -n --arg` step correctly JSON-escapes the digest text (newlines,
 quotes) — don't hand-build the JSON payload string directly.
 
+**If this `curl` fails for any reason (including a `403` from the
+environment's own network egress policy blocking `discord.com` — a real,
+confirmed failure mode in this environment, not hypothetical), do not
+stop the routine and do not skip step 6.** Note the failure in the final
+report and continue. A notification delivery failure says nothing about
+whether the evaluation data itself is valid — gating persistence on it
+was a real bug (see Notes) that lost a full run's evaluations (486
+candidates) the first time this environment's egress policy actually
+blocked the request.
+
 ## 6. Upload the candidate store back to Drive
 
 Upload `.automation/candidates.db`, overwriting
-`agentalloy-automation-candidates.db` in Drive. This is the only step that
-matters for the *database* state to persist into the next scheduled run —
-if it's skipped, the next run re-downloads the old Drive copy and repeats
-this run's import/evaluate work (harmlessly, since both are idempotent).
-The Discord notification in step 5 has already been sent by this point
-regardless of whether this step succeeds.
+`agentalloy-automation-candidates.db` in Drive, **as long as steps 1-4
+completed without error — independent of whether step 5 (Discord)
+succeeded.** This is the only step that matters for the *database* state
+to persist into the next scheduled run; a real evaluation batch (486/486
+processed, 0 errors) is valid, persistable data regardless of whether the
+notification about it happened to get delivered. If step 1-4 genuinely
+failed (corrupt import, a crash mid-evaluation), do NOT upload — stop and
+report the error instead, so a partial or corrupt *data* state is never
+persisted. A failed Discord POST is not that — see step 5.
 
 ## Notes
 
@@ -83,3 +96,15 @@ regardless of whether this step succeeds.
 - This routine's Drive-hosted `candidates.db` is a separate, canonical copy
   for the routine's own use — it is not synced with any human's local
   `.automation/candidates.db` from an interactive session.
+- **Real incident, 2026-07-12**: `discord.com` returned a `403` from this
+  environment's network egress policy on the routine's very first
+  Discord-enabled run, and step 6 was (at the time) gated on step 5
+  succeeding — so a full, clean evaluation batch (486 candidates: 11
+  accept, 32 needs_review, 443 reject, 0 errors) was never uploaded to
+  Drive and was lost when the session ended. Fixed by decoupling step 6
+  from step 5's outcome (see above). The underlying `discord.com` egress
+  block is still unresolved — either the environment's egress policy
+  needs `discord.com` allowed, or Discord delivery for this routine needs
+  a different path entirely (e.g. bridging through the already-working
+  GitHub Actions webhook delivery used by `pr-digest.yml`, which runs in
+  a different, unrestricted network environment). Not yet decided.
