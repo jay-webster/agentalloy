@@ -54,6 +54,18 @@ adjacent `allow_auto_merge` change even though both are needed for the
 feature to work end-to-end, because Jay's instruction named only branch
 protection.
 
+**Resolution, in the order it actually happened**: branch protection was
+applied first, alone, per Jay's scoped request — confirmed via a manual
+test (this session's own `gh` CLI, not the workflow's bot token) that a
+merge no longer completes before required checks finish, though that test
+couldn't cleanly distinguish "deferred, then merged" from "already
+mergeable, merged immediately," since it ran under Jay's own identity, a
+different execution context than the bot token the real workflow uses.
+Only after that partial confirmation, and a second explicit, fresh
+instruction, was `allow_auto_merge` enabled and the workflow re-enabled
+for a real end-to-end test under the bot's own token — see the QA report
+for that test's outcome.
+
 ## Decisions worth keeping
 
 - **Test settings changes against their actual documented interaction,
