@@ -365,6 +365,43 @@ Skills are authored via the author-critic pipeline:
 
 QA reviews against the R1-R8 quality contract (clear triggers, actionable steps, specific pitfalls, verification, copy-paste-ready commands, no aspirational content, accurate cross-references, context-window fit). See [Skill Authoring and Overrides Spec](skill-authoring-and-overrides-spec.md) for the full definitions.
 
+#### Local Model Setup (Author & Critic)
+
+The author/revise step and the QA/critic step talk to **two separate**
+local servers — pointing both at the same server is a common setup
+mistake, since only one model will actually be loaded correctly:
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AUTHORING_MODEL` | Author/revise model (drafts and rewrites skill YAML) | `qwen3-14b-instruct` |
+| `AUTHORING_CRITIC_MODEL` | QA/critic model (reviews drafts against the R1-R8 contract) | `qwen3.6-27b` |
+| `AUTHORING_LM_BASE_URL` | LM server URL for the author/revise model | `http://localhost:11435` |
+| `AUTHORING_LM_STUDIO_BASE_URL` | LM Studio URL for the critic model | `http://localhost:11434` |
+
+Unlike the embed model and reranker (`### Environment Variables` above),
+agentalloy does not download or manage these models — LM Studio (or
+another OpenAI-compatible local server) is bring-your-own, and
+`ensure_model_loaded()` raises a clear error at runtime if the configured
+model isn't loaded.
+
+**Apple Silicon** (verified against a 48GB M4 Pro Mac Mini; NVIDIA/AMD/
+CPU-only guidance not yet written):
+
+Load one of these into LM Studio for the critic model
+(`AUTHORING_CRITIC_MODEL=qwen3.6-27b`):
+
+- **GGUF, 4-bit (~18GB, recommended default)**:
+  [unsloth/Qwen3.6-27B-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF)
+  — via llama.cpp with Metal acceleration.
+- **MLX, 4-bit (26.2GB)**:
+  [unsloth/Qwen3.6-27B-UD-MLX-4bit](https://huggingface.co/unsloth/Qwen3.6-27B-UD-MLX-4bit)
+  — Apple's own inference stack.
+- **MLX, 8-bit (34.7GB, higher accuracy, less headroom)**:
+  [unsloth/Qwen3.6-27B-MLX-8bit](https://huggingface.co/unsloth/Qwen3.6-27B-MLX-8bit)
+
+Leave headroom beyond the model file size for macOS and LM Studio itself
+— don't size the model to the last few GB of unified memory.
+
 ### Skill Override CLI
 
 `agentalloy customize {list,edit,validate,update,diff,reset}` with `--profile` and `--project` flags. Edits a system/workflow skill's `raw_prose` and `domain_tags` without forking shipped defaults; workflow structural fields (exit gates, signal keywords, contract templates) are product-owned and locked, and `prose_invariants` (load-bearing commands) must survive any rewrite. The web UI's **Skills** page wraps the same validator as a one-click editor — layer banner, live invariant checklist, diff against the shipped default.
