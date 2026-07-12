@@ -2,7 +2,7 @@
 
 ## Checks
 
-- **New tests**: 11 added (`test_pr_digest.py`) — PR created in window →
+- **New tests**: 12 added (`test_pr_digest.py`) — PR created in window →
   opened bucket; PR merged in window → merged bucket; currently-open PR →
   still-open bucket regardless of age; bot merger → "auto-merged" label;
   human merger → "manually merged" label; missing merger → bare "merged"
@@ -11,8 +11,10 @@
   the exact `{"content": ...}` body to the given URL (monkeypatched
   `urlopen`); `main()` returns 0 on a monkeypatched success path; `main()`
   with a missing env var returns non-zero with a stderr diagnostic
-  naming the missing var, not a raw `KeyError`. **90 total in
-  `tests/automation/`** (79 pre-existing + 11 new), all pass unmodified.
+  naming the missing var, not a raw `KeyError`; `main()` with an empty
+  (present-but-blank) `DISCORD_WEBHOOK_URL` skips gracefully with exit 0,
+  never calling `post_to_discord`. **91 total in `tests/automation/`**
+  (79 pre-existing + 12 new), all pass unmodified.
 - **Lint**: `uv run ruff check .` — clean, whole repo. `uv run ruff format
   --check .` — clean, whole repo.
 - **Type checker**: `uv run pyright automation/ci/` — **0 errors**. The
@@ -66,6 +68,21 @@
      restated here). Not a new finding requiring a new decision — Gemini
      independently arrived at a risk this slice's spec had already
      weighed and consciously accepted.
+- **Second real review pass — the `isBot` claim repeated (still
+  incorrect, still not fixed — see above), but a second finding this
+  round was new, real, and fixed.** `main()` treated
+  `DISCORD_WEBHOOK_URL` as present-or-KeyError, but the workflow always
+  passes `secrets.DISCORD_WEBHOOK_URL` as an env var regardless of
+  whether the secret is actually set — before Jay sets it, that resolves
+  to an **empty string**, not a missing key, so the old code would reach
+  `post_to_discord` and crash on `urllib.request` with an empty URL. Since
+  this workflow runs on a daily schedule starting the moment it's merged
+  — well before the live-proof step that provisions the real secret — this
+  would have produced a real failure email every single day until Jay
+  got to it. **Fixed**: `main()` now checks for an empty (not just
+  missing) `webhook_url` and exits `0` with a clear log line instead of
+  attempting delivery. Covered by
+  `test_main_empty_webhook_url_skips_gracefully`.
 - **Live proof (AC5)**: **not yet reached.** Blocked on Jay confirming
   `DISCORD_WEBHOOK_URL` is set as a repo secret — the same still-open
   dependency `automation-discord-notify`'s task 31 has been waiting on.

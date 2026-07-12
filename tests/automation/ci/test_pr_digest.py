@@ -155,6 +155,27 @@ def test_main_returns_zero_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exit_code == 0
 
 
+def test_main_empty_webhook_url_skips_gracefully(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SINCE", "2026-07-11T00:00:00Z")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "")
+    monkeypatch.setattr("sys.stdin", io.StringIO("[]"))
+    called = False
+
+    def _fail_if_called(message: str, webhook_url: str) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(pr_digest, "post_to_discord", _fail_if_called)
+
+    exit_code = pr_digest.main()
+
+    assert exit_code == 0
+    assert called is False
+    assert "skipping" in capsys.readouterr().out.lower()
+
+
 def test_main_missing_env_var_returns_nonzero_with_diagnostic(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

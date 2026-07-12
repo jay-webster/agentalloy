@@ -59,6 +59,14 @@ def main() -> int:
     try:
         since = os.environ["SINCE"]
         webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
+        if not webhook_url:
+            # DISCORD_WEBHOOK_URL is always passed (secrets.DISCORD_WEBHOOK_URL),
+            # but resolves to an empty string, not a missing key, before Jay sets
+            # the secret -- a graceful skip avoids daily failure noise on a
+            # schedule that starts running the moment this ships, well before
+            # the live-proof step that provisions the real secret.
+            print("DISCORD_WEBHOOK_URL is not set -- skipping digest.")
+            return 0
         prs = json.loads(sys.stdin.read())
         message = format_digest(prs, since)
         post_to_discord(message, webhook_url)
