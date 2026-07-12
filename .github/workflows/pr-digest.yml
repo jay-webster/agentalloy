@@ -1,0 +1,46 @@
+name: PR Digest
+
+# Regular Discord visibility into PR activity -- opened, merged (noting
+# auto vs. manual), still open -- so PRs (including any that auto-merge
+# via auto-merge-gate.yml) don't happen somewhere nobody is watching.
+# Stateless rolling window: each run reports on the last 24 hours,
+# computed fresh from the current time, no persisted "since last run"
+# state.
+#
+# DISCORD_WEBHOOK_URL is a repository secret, never referenced as a
+# literal value anywhere in this file or logged -- GitHub redacts secret
+# values from workflow logs automatically.
+
+on:
+  schedule:
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Fetch PR activity and post digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          set -o pipefail
+          export SINCE=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          gh pr list --state all --limit 100 \
+            --json number,title,url,author,createdAt,mergedAt,state,mergedBy \
+            > /tmp/prs.json
+          uv run python -m automation.ci.pr_digest < /tmp/prs.json
