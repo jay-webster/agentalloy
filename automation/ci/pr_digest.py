@@ -48,7 +48,11 @@ def post_to_discord(message: str, webhook_url: str) -> None:
     req = urllib.request.Request(
         webhook_url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        # Discord's edge (Cloudflare) returns a bare 403 for requests using
+        # urllib's default "Python-urllib/x.y" User-Agent -- a real finding
+        # from this script's own first live run against a real webhook.
+        # Any identifiable, non-default UA clears it.
+        headers={"Content-Type": "application/json", "User-Agent": "agentalloy-pr-digest/1.0"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
