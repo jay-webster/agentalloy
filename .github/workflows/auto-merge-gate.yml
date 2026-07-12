@@ -16,7 +16,12 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  # contents: write is required, not just pull-requests: write -- enabling
+  # (or performing) a merge is a content-changing GraphQL mutation. A real
+  # finding from this workflow's own first low-risk PR: contents: read
+  # produced "GraphQL: Resource not accessible by integration
+  # (mergePullRequest)" on the gh pr merge --auto call.
+  contents: write
   pull-requests: write # gh pr merge --auto
 
 jobs:

@@ -134,6 +134,21 @@ build/ship (§6).
   hard-to-reverse account-setting change). Shipping the code now, with
   the checkpoint clearly marked, is the intended sequencing — not a gap
   in this QA pass.
+- **Real bug found post-merge, by the first real low-risk PR (PR #14,
+  from `automation-pr-digest`'s own live-proof follow-up) to actually hit
+  the `gh pr merge --auto` call.** `Classified: low` (correct), then
+  `GraphQL: Resource not accessible by integration (mergePullRequest)`.
+  Root cause: `permissions: pull-requests: write` alone is insufficient
+  for `gh pr merge --auto` — enabling (or performing) a merge is a
+  content-changing GraphQL mutation and needs `contents: write` too.
+  This was findable independent of whether `allow_auto_merge`/branch
+  protection are enabled yet (confirmed still both off at the time of
+  this finding — the token-permissions error occurs before GitHub even
+  checks the repo-level auto-merge setting), so it's a real bug this
+  workflow would have hit regardless of the settings checkpoint's
+  timing. **Fixed**: added `contents: write` to the workflow's
+  `permissions` block, in a follow-up PR; re-verified by re-triggering
+  the same already-open, already-low-risk PR #14.
 
 ## Verdict
 
