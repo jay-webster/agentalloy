@@ -43,6 +43,39 @@ def format_digest(prs: list[dict[str, Any]], since: str) -> str:
     return "\n".join(lines)
 
 
+# Discord's documented hard limit on a single message's `content` field.
+# A real finding from this script's own live run: 19 real PRs in one
+# window produced a 4590-char digest, and Discord's webhook API returned
+# a bare 400 Bad Request rather than truncating -- the message-length
+# safeguard this slice's own spec had deliberately deferred as
+# low-probability became real the first time PR volume actually spiked.
+DISCORD_MESSAGE_LIMIT = 2000
+
+
+def chunk_message(message: str, limit: int = DISCORD_MESSAGE_LIMIT) -> list[str]:
+    """Split on line boundaries into chunks each within Discord's limit.
+
+    Never breaks a PR entry mid-line. A message already under the limit
+    returns as a single chunk, reconstructing the original unchanged.
+    """
+    lines = message.split("\n")
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        added_len = len(line) + (1 if current else 0)
+        if current and current_len + added_len > limit:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += added_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
 def post_to_discord(message: str, webhook_url: str) -> None:
     body = json.dumps({"content": message}).encode()
     req = urllib.request.Request(
@@ -73,7 +106,8 @@ def main() -> int:
             return 0
         prs = json.loads(sys.stdin.read())
         message = format_digest(prs, since)
-        post_to_discord(message, webhook_url)
+        for chunk in chunk_message(message):
+            post_to_discord(chunk, webhook_url)
     except Exception as exc:  # noqa: BLE001 -- always surface a clear diagnostic
         print(f"pr-digest failed: {exc}", file=sys.stderr)
         return 1

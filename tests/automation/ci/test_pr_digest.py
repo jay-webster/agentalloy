@@ -116,6 +116,34 @@ def test_pr_outside_window_and_not_open_appears_in_no_bucket() -> None:
     assert "#8" not in digest
 
 
+def test_chunk_message_short_message_returns_single_chunk_unchanged() -> None:
+    message = "line1\nline2\nline3"
+
+    chunks = pr_digest.chunk_message(message, limit=2000)
+
+    assert chunks == [message]
+
+
+def test_chunk_message_splits_long_message_and_stays_under_limit() -> None:
+    lines = [f"- #{i} some PR title padded out to be realistically long — url" for i in range(200)]
+    message = "\n".join(lines)
+
+    chunks = pr_digest.chunk_message(message, limit=2000)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 2000 for chunk in chunks)
+
+
+def test_chunk_message_never_breaks_a_line_mid_entry() -> None:
+    lines = [f"- #{i} some PR title padded out to be realistically long — url" for i in range(200)]
+    message = "\n".join(lines)
+
+    chunks = pr_digest.chunk_message(message, limit=2000)
+
+    reconstructed = "\n".join(chunks)
+    assert reconstructed == message
+
+
 def test_post_to_discord_sends_content_field_to_webhook_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -155,6 +183,30 @@ def test_main_returns_zero_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     exit_code = pr_digest.main()
 
     assert exit_code == 0
+
+
+def test_main_posts_multiple_chunks_for_a_long_digest(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SINCE", "2020-01-01T00:00:00Z")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.example/webhook")
+    many_prs = [
+        _pr(
+            number=i,
+            title=f"some realistically long PR title number {i} padded out further",
+            state="OPEN",
+        )
+        for i in range(60)
+    ]
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(many_prs)))
+    posted = []
+    monkeypatch.setattr(
+        pr_digest, "post_to_discord", lambda message, webhook_url: posted.append(message)
+    )
+
+    exit_code = pr_digest.main()
+
+    assert exit_code == 0
+    assert len(posted) > 1
+    assert all(len(chunk) <= pr_digest.DISCORD_MESSAGE_LIMIT for chunk in posted)
 
 
 def test_main_empty_webhook_url_skips_gracefully(
