@@ -95,8 +95,14 @@
   requests lacking a real user agent. **Fixed**: added an explicit,
   identifiable `User-Agent` header (`agentalloy-pr-digest/1.0`). Covered
   by a new assertion in `test_post_to_discord_sends_content_field_to_webhook_url`
-  confirming the header isn't the default urllib string. Re-verified with
-  a second real `workflow_dispatch` run — see below for outcome.
+  confirming the header isn't the default urllib string. Fixed and merged
+  as PR #13.
+- **Second real `workflow_dispatch` run, after PR #13 merged: full
+  success, confirmed end-to-end.** `gh run view` showed `conclusion:
+  success`; the run's own log showed a correctly formatted real digest —
+  8 opened, 8 merged (PRs #6-#13, all real, all labeled "manually
+  merged" since no auto-merge has happened yet); **Jay confirmed the
+  message actually arrived in his Discord channel.** AC5 is fully met.
 
 ## Review
 
@@ -107,11 +113,13 @@
 2. **Delivery function posts correctly, URL only from env — MET.** See
    Checks, T2.1-T2.3.
 3. **Workflow computes its window and fetches real PR data via module
-   invocation — MET** (code review) **, live-run confirmation NOT YET
-   REACHED** (AC5).
+   invocation — MET.** Confirmed by a real, successful `workflow_dispatch`
+   run producing a correctly formatted digest.
 4. **No product code touched — MET.** See Checks, scope check.
-5. **Live proof — NOT YET REACHED.** Blocked on Jay setting
-   `DISCORD_WEBHOOK_URL`.
+5. **Live proof — MET.** A real Discord webhook, a real repo secret, two
+   real `workflow_dispatch` runs (one surfacing and fixing a genuine
+   `403` bug, one succeeding end-to-end), and Jay's direct confirmation
+   the message landed in his Discord channel.
 6. **No new external credential exposure — MET.** See Checks,
    secret-handling check.
 
@@ -145,22 +153,23 @@ var, module-form invocation (§5); daily 13:00 UTC cron plus
   (see Checks). This is direct evidence the "apply prior findings
   preemptively" discipline this session has been building actually pays
   off, not just a retrospective lesson-doc entry.
-- **Deliberately incomplete, not a defect**: AC5 (live proof) is blocked
-  on Jay's action (setting the webhook secret), named explicitly rather
-  than silently deferred — matching `automation-discord-notify`'s own
-  precedent for the identical kind of external-dependency gap.
+- **Real bug, found in live proof and fixed (PR #13)**: `post_to_discord`
+  sent no `User-Agent` header, so Discord's Cloudflare edge rejected the
+  request with a bare `403` — invisible to every unit test (which
+  monkeypatches `urlopen` entirely) and only catchable by a real POST to
+  a real Discord endpoint. Direct validation of AC5's own purpose.
 
 ## Verdict
 
-**Partial — clean for what's in scope of this PR.** ACs 1, 2, 4, 6 are
-fully met with real test coverage and direct inspection; AC3 is met by
-code review with live confirmation pending. AC5 is honestly incomplete,
-blocked on Jay providing a Discord webhook URL — the same real, unresolved
-dependency `automation-discord-notify`'s own task 31 has been sitting on.
-Not silently glossed over. The `review` check itself shows `fail` on this
-PR — investigated and traced to a factually incorrect claim in Gemini's
-review (see Checks), not a real code defect; the code's field name is
-verified correct against real, live GitHub data. This PR is safe to merge
-on its own: the new workflow is inert (a `schedule`/`workflow_dispatch`-
-triggered job with no effect on merges, branch protection, or any
-existing workflow) until the secret is set and a live run is performed.
+**Clean — all 6 acceptance criteria met, with a real bug found and fixed
+along the way.** ACs 1, 2, 4, 6 were met with real test coverage and
+direct inspection from the start. AC3 and AC5 required Jay's real
+Discord webhook and repo secret to complete — once provided, live proof
+found one genuine bug (Discord's `403` on urllib's default User-Agent,
+fixed in PR #13) that no unit test could have caught, then succeeded
+cleanly on a second real run, confirmed by Jay seeing the actual message
+in his Discord channel. The `review` check's one `fail` state during
+this slice's history was investigated and traced to a factually
+incorrect claim in Gemini's review (see Checks) — the code's field name
+was verified correct against real, live GitHub data — not a real defect,
+and documented rather than either blindly "fixed" or silently ignored.
