@@ -83,10 +83,20 @@
   missing) `webhook_url` and exits `0` with a clear log line instead of
   attempting delivery. Covered by
   `test_main_empty_webhook_url_skips_gracefully`.
-- **Live proof (AC5)**: **not yet reached.** Blocked on Jay confirming
-  `DISCORD_WEBHOOK_URL` is set as a repo secret — the same still-open
-  dependency `automation-discord-notify`'s task 31 has been waiting on.
-  Will be recorded here once performed.
+- **Live proof (AC5), performed after merge, found one real bug.** Jay
+  created a real Discord webhook and set `DISCORD_WEBHOOK_URL` as a repo
+  secret (confirmed via `gh secret list`, value never seen by this
+  session). First real `workflow_dispatch` run: `HTTP Error 403:
+  Forbidden` posting to Discord — the error-handling correctly printed a
+  diagnostic and exited non-zero rather than crashing silently, exactly
+  as designed. Root cause: `post_to_discord` sent no `User-Agent` header,
+  so `urllib.request` used its default `Python-urllib/x.y` string, which
+  Discord's edge (Cloudflare) is known to reject with a bare 403 for
+  requests lacking a real user agent. **Fixed**: added an explicit,
+  identifiable `User-Agent` header (`agentalloy-pr-digest/1.0`). Covered
+  by a new assertion in `test_post_to_discord_sends_content_field_to_webhook_url`
+  confirming the header isn't the default urllib string. Re-verified with
+  a second real `workflow_dispatch` run — see below for outcome.
 
 ## Review
 

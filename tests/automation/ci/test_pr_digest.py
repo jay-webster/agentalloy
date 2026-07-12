@@ -134,6 +134,7 @@ def test_post_to_discord_sends_content_field_to_webhook_url(
     def _fake_urlopen(req, timeout=None):
         captured["url"] = req.full_url
         captured["body"] = json.loads(req.data)
+        captured["headers"] = {k.lower(): v for k, v in req.headers.items()}
         return _FakeResponse()
 
     monkeypatch.setattr(pr_digest.urllib.request, "urlopen", _fake_urlopen)
@@ -142,6 +143,7 @@ def test_post_to_discord_sends_content_field_to_webhook_url(
 
     assert captured["url"] == "https://discord.example/webhook"
     assert captured["body"] == {"content": "hello digest"}
+    assert captured["headers"].get("user-agent", "").startswith("Python-urllib") is False
 
 
 def test_main_returns_zero_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
