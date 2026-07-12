@@ -39,6 +39,33 @@
   `secrets.DISCORD_WEBHOOK_URL` only; the script reads
   `os.environ["DISCORD_WEBHOOK_URL"]` only. No webhook value has appeared
   in this session's conversation or any file.
+- **First real review pass returned `request_changes` — one finding
+  investigated and rejected as factually incorrect, one acknowledged as
+  already-deliberate scope.**
+  1. **Claimed major, investigated, rejected**: Gemini claimed `gh pr
+     list --json mergedBy` returns camelCase `isBot`, not the snake_case
+     `is_bot` this code checks — which would make every bot-merge
+     silently mislabeled "manually merged." **Checked directly against
+     real live data**: `gh pr view 9 --json mergedBy` and `gh pr list
+     --json number,mergedBy` (against PRs #9, #10, #11, all real,
+     already-merged PRs on this repo) both return `is_bot` in snake_case,
+     exactly matching this code's field name. This is the same field
+     name already verified once before, during this slice's own design
+     phase, against the same PR #9. **Not fixed — there is nothing to
+     fix.** This is the first finding across five real Gemini review
+     rounds this session where the finding itself, not the code, was
+     wrong — worth recording plainly rather than either silently
+     "fixing" correct code or silently ignoring a `request_changes`
+     verdict.
+  2. **Claimed minor, real, already-deliberate**: Discord's 2000-character
+     message limit could theoretically be exceeded at high PR volume.
+     This exact risk was already named and deliberately deferred in this
+     slice's own spec ("Out of Scope: ... no message-length safeguard...
+     not worth the complexity... at the real 9-item digest size just
+     proven" — direct precedent from `automation-discord-notify`'s spec,
+     restated here). Not a new finding requiring a new decision — Gemini
+     independently arrived at a risk this slice's spec had already
+     weighed and consciously accepted.
 - **Live proof (AC5)**: **not yet reached.** Blocked on Jay confirming
   `DISCORD_WEBHOOK_URL` is set as a repo secret — the same still-open
   dependency `automation-discord-notify`'s task 31 has been waiting on.
@@ -103,7 +130,10 @@ fully met with real test coverage and direct inspection; AC3 is met by
 code review with live confirmation pending. AC5 is honestly incomplete,
 blocked on Jay providing a Discord webhook URL — the same real, unresolved
 dependency `automation-discord-notify`'s own task 31 has been sitting on.
-Not silently glossed over. This PR is safe to merge on its own: the new
-workflow is inert (a `schedule`/`workflow_dispatch`-triggered job with no
-effect on merges, branch protection, or any existing workflow) until the
-secret is set and a live run is performed.
+Not silently glossed over. The `review` check itself shows `fail` on this
+PR — investigated and traced to a factually incorrect claim in Gemini's
+review (see Checks), not a real code defect; the code's field name is
+verified correct against real, live GitHub data. This PR is safe to merge
+on its own: the new workflow is inert (a `schedule`/`workflow_dispatch`-
+triggered job with no effect on merges, branch protection, or any
+existing workflow) until the secret is set and a live run is performed.
