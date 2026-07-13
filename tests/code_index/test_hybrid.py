@@ -23,6 +23,7 @@ from .conftest import (
     make_symbol,
     mix_vec,
     seed_index,
+    seed_rationale_link,
     vector_row,
 )
 
@@ -127,6 +128,95 @@ async def test_lexical_search_hydrates_from_graph(state: CodeIndexState) -> None
 
     # No FTS match — empty, not an error.
     assert await lexical_search(state, SLUG, "nomatchtoken", k=5) == []
+
+
+async def test_semantic_search_surfaces_linked_rationale(state: CodeIndexState) -> None:
+    # T#1 (AC1)
+    seed_index(
+        state.settings,
+        SLUG,
+        symbols=[make_symbol("m.exact", docstring="The exact one.")],
+        vectors=[vector_row("m.exact", axis_vec(0))],
+    )
+    seed_rationale_link(
+        state.settings.duckdb_path,
+        repo_slug=SLUG,
+        qualified_name="m.exact",
+        skill_id="skill-x",
+        rationale="because it rate-limits",
+    )
+    results = await semantic_search(state, SLUG, "anything", k=10)
+    assert results[0].qualified_name == "m.exact"
+    assert [hit.rationale for hit in results[0].rationale] == ["because it rate-limits"]
+
+
+async def test_lexical_search_surfaces_linked_rationale(state: CodeIndexState) -> None:
+    # T#2 (AC1)
+    seed_index(
+        state.settings,
+        SLUG,
+        symbols=[make_symbol("m.frob", docstring="Frobnicates widgets.")],
+        vectors=[vector_row("m.frob", axis_vec(0), text="def frobnicate(widget): pass")],
+        fts=True,
+    )
+    seed_rationale_link(
+        state.settings.duckdb_path,
+        repo_slug=SLUG,
+        qualified_name="m.frob",
+        skill_id="skill-y",
+        rationale="handles the widget edge case",
+    )
+    results = await lexical_search(state, SLUG, "frobnicate", k=5)
+    assert [hit.rationale for hit in results[0].rationale] == ["handles the widget edge case"]
+
+
+async def test_unlinked_symbol_rationale_is_empty(state: CodeIndexState) -> None:
+    # T#4 (AC3) — the common case: no link at all, not an error.
+    seed_index(
+        state.settings,
+        SLUG,
+        symbols=[make_symbol("m.exact", docstring="The exact one.")],
+        vectors=[vector_row("m.exact", axis_vec(0))],
+    )
+    results = await semantic_search(state, SLUG, "anything", k=10)
+    assert results[0].rationale == []
+    assert results[0].file_path == "m/exact.py"
+    assert results[0].snippet == "The exact one."
+
+
+async def test_rationale_scoped_to_repo(state: CodeIndexState) -> None:
+    # T#5 (AC5) — a link under a different repo_slug doesn't leak.
+    seed_index(
+        state.settings,
+        SLUG,
+        symbols=[make_symbol("m.exact", docstring="The exact one.")],
+        vectors=[vector_row("m.exact", axis_vec(0))],
+    )
+    seed_rationale_link(
+        state.settings.duckdb_path,
+        repo_slug="other-repo",
+        qualified_name="m.exact",
+        skill_id="skill-z",
+        rationale="scoped to another repo",
+    )
+    results = await semantic_search(state, SLUG, "anything", k=10)
+    assert results[0].rationale == []
+
+
+async def test_corpus_unreachable_degrades_to_empty_rationale(
+    state: CodeIndexState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # T#6 (AC6) — a corpus-open failure must not raise out of the request.
+    monkeypatch.setattr(state.settings, "duckdb_path", "/nonexistent/dir/agentalloy.duck")
+    seed_index(
+        state.settings,
+        SLUG,
+        symbols=[make_symbol("m.exact", docstring="The exact one.")],
+        vectors=[vector_row("m.exact", axis_vec(0))],
+    )
+    results = await semantic_search(state, SLUG, "anything", k=10)
+    assert results[0].qualified_name == "m.exact"
+    assert results[0].rationale == []
 
 
 def test_rewrite_query_essence() -> None:

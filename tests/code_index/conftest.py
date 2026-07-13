@@ -106,7 +106,10 @@ def fixture_repo(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    return Settings(code_index_data_dir=str(tmp_path / "code-index-data"))
+    return Settings(
+        code_index_data_dir=str(tmp_path / "code-index-data"),
+        duckdb_path=str(tmp_path / "agentalloy.duck"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +198,35 @@ def vector_row(
         text=text or f"def {qn.rsplit('.', 1)[-1]}(): pass",
         indexed_at=1_700_000_000,
     )
+
+
+def seed_rationale_link(
+    duckdb_path: str, *, repo_slug: str, qualified_name: str, skill_id: str, rationale: str
+) -> None:
+    """Write a promoted skill + its rationale-link row directly into the
+    skill corpus (mirrors ``test_symbols_rationale_router.py``'s fixture)."""
+    from agentalloy.reads.rationale_links import link_symbol
+    from agentalloy.storage.skill_store import open_skill_store
+
+    store = open_skill_store(duckdb_path)
+    version_id = f"{skill_id}-v1"
+    store.execute(
+        "INSERT INTO skills (skill_id, canonical_name, skill_class, category, "
+        "deprecated, current_version_id) VALUES (?,?,?,?,?,?)",
+        [skill_id, skill_id, "domain", "engineering", False, version_id],
+    )
+    store.execute(
+        "INSERT INTO skill_versions (version_id, skill_id, version_number, status, raw_prose) "
+        "VALUES (?,?,?,?,?)",
+        [version_id, skill_id, 1, "active", rationale],
+    )
+    store.execute(
+        "INSERT INTO fragments (fragment_id, version_id, fragment_type, sequence, content) "
+        "VALUES (?,?,?,?,?)",
+        [f"{skill_id}-f0", version_id, "rationale", 0, rationale],
+    )
+    link_symbol(store, repo_slug=repo_slug, qualified_name=qualified_name, skill_id=skill_id)
+    store.close()
 
 
 def seed_index(

@@ -11,7 +11,15 @@ from agentalloy.code_index.retrieval.bundle import build_bundle
 from agentalloy.code_index.store import open_jobs
 from agentalloy.config import Settings
 
-from .conftest import FixedEmbedClient, axis_vec, calls_edge, make_symbol, seed_index, vector_row
+from .conftest import (
+    FixedEmbedClient,
+    axis_vec,
+    calls_edge,
+    make_symbol,
+    seed_index,
+    seed_rationale_link,
+    vector_row,
+)
 
 SLUG = "repo"
 
@@ -79,6 +87,77 @@ async def test_test_path_penalty_demotes_test_symbol(state: CodeIndexState) -> N
     assert names.index("pkg.impl") < names.index("pkg.tests.test_core")
     by_qn = {item.qualified_name: item for item in bundle.items}
     assert by_qn["pkg.tests.test_core"].score < by_qn["pkg.impl"].score
+
+
+async def test_bundle_surfaces_linked_rationale(state: CodeIndexState) -> None:
+    # T#3 (AC2) — both the seed and an expanded (caller/callee) item.
+    seed_call_graph(state.settings)
+    seed_rationale_link(
+        state.settings.duckdb_path,
+        repo_slug=SLUG,
+        qualified_name="pkg.core",
+        skill_id="skill-core",
+        rationale="core routine rationale",
+    )
+    seed_rationale_link(
+        state.settings.duckdb_path,
+        repo_slug=SLUG,
+        qualified_name="pkg.leaf",
+        skill_id="skill-leaf",
+        rationale="leaf routine rationale",
+    )
+    bundle = await build_bundle(state, SLUG, "explain the core routine")
+    by_qn = {item.qualified_name: item for item in bundle.items}
+    assert [hit.rationale for hit in by_qn["pkg.core"].rationale] == ["core routine rationale"]
+    assert [hit.rationale for hit in by_qn["pkg.leaf"].rationale] == ["leaf routine rationale"]
+    assert by_qn["pkg.entry"].rationale == []
+
+
+async def test_bundle_rationale_scoped_to_repo(state: CodeIndexState) -> None:
+    # T#5 (AC5) — a link under a different repo_slug doesn't leak.
+    seed_call_graph(state.settings)
+    seed_rationale_link(
+        state.settings.duckdb_path,
+        repo_slug="other-repo",
+        qualified_name="pkg.core",
+        skill_id="skill-core",
+        rationale="scoped to another repo",
+    )
+    bundle = await build_bundle(state, SLUG, "explain the core routine")
+    by_qn = {item.qualified_name: item for item in bundle.items}
+    assert by_qn["pkg.core"].rationale == []
+
+
+async def test_bundle_corpus_unreachable_degrades_to_empty_rationale(
+    state: CodeIndexState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # T#6 (AC6) — a corpus-open failure must not raise out of the request.
+    monkeypatch.setattr(state.settings, "duckdb_path", "/nonexistent/dir/agentalloy.duck")
+    seed_call_graph(state.settings)
+    bundle = await build_bundle(state, SLUG, "explain the core routine")
+    assert len(bundle.items) == 3
+    assert all(item.rationale == [] for item in bundle.items)
+
+
+async def test_bundle_long_rationale_does_not_shrink_source_budget(state: CodeIndexState) -> None:
+    # T#8 — rationale rides free; only `source` counts against budget_chars.
+    seed_call_graph(state.settings)
+    baseline = await build_bundle(state, SLUG, "explain the core routine", budget_chars=200)
+    baseline_by_qn = {item.qualified_name: item for item in baseline.items}
+
+    seed_rationale_link(
+        state.settings.duckdb_path,
+        repo_slug=SLUG,
+        qualified_name="pkg.core",
+        skill_id="skill-core",
+        rationale="x" * 5000,
+    )
+    with_rationale = await build_bundle(state, SLUG, "explain the core routine", budget_chars=200)
+    with_by_qn = {item.qualified_name: item for item in with_rationale.items}
+
+    assert with_rationale.total_chars == baseline.total_chars
+    assert with_by_qn["pkg.core"].source == baseline_by_qn["pkg.core"].source
+    assert [hit.rationale for hit in with_by_qn["pkg.core"].rationale] == ["x" * 5000]
 
 
 async def test_budget_truncation(state: CodeIndexState) -> None:
