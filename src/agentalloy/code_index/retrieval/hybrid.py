@@ -218,9 +218,12 @@ def _attach_rationale(results: list[SearchResult], state: CodeIndexState, slug: 
         return
     try:
         for r in results:
-            r.rationale = rationale_for_symbol(
-                store, repo_slug=slug, qualified_name=r.qualified_name
-            )
+            try:
+                r.rationale = rationale_for_symbol(
+                    store, repo_slug=slug, qualified_name=r.qualified_name
+                )
+            except Exception:
+                continue
     finally:
         store.close()
 

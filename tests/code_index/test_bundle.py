@@ -160,6 +160,22 @@ async def test_bundle_long_rationale_does_not_shrink_source_budget(state: CodeIn
     assert [hit.rationale for hit in with_by_qn["pkg.core"].rationale] == ["x" * 5000]
 
 
+async def test_bundle_rationale_query_failure_degrades_to_empty_rationale(
+    state: CodeIndexState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A query-time exception (not just a corpus-open failure) must not raise.
+    from agentalloy.reads import rationale_links
+
+    def _boom(*args: object, **kwargs: object) -> list[object]:
+        raise RuntimeError("simulated query failure")
+
+    monkeypatch.setattr(rationale_links, "rationale_for_symbol", _boom)
+    seed_call_graph(state.settings)
+    bundle = await build_bundle(state, SLUG, "explain the core routine")
+    assert len(bundle.items) == 3
+    assert all(item.rationale == [] for item in bundle.items)
+
+
 async def test_budget_truncation(state: CodeIndexState) -> None:
     seed_call_graph(state.settings)
     full = await build_bundle(state, SLUG, "explain the core routine", budget_chars=24000)

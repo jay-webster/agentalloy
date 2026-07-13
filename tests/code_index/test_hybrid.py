@@ -219,6 +219,27 @@ async def test_corpus_unreachable_degrades_to_empty_rationale(
     assert results[0].rationale == []
 
 
+async def test_rationale_query_failure_degrades_to_empty_rationale(
+    state: CodeIndexState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A query-time exception (not just a corpus-open failure) must not raise.
+    from agentalloy.reads import rationale_links
+
+    def _boom(*args: object, **kwargs: object) -> list[object]:
+        raise RuntimeError("simulated query failure")
+
+    monkeypatch.setattr(rationale_links, "rationale_for_symbol", _boom)
+    seed_index(
+        state.settings,
+        SLUG,
+        symbols=[make_symbol("m.exact", docstring="The exact one.")],
+        vectors=[vector_row("m.exact", axis_vec(0))],
+    )
+    results = await semantic_search(state, SLUG, "anything", k=10)
+    assert results[0].qualified_name == "m.exact"
+    assert results[0].rationale == []
+
+
 def test_rewrite_query_essence() -> None:
     # Long descriptive query: stop-words stripped.
     assert rewrite_query("how does the error envelope construction work") == (

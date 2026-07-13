@@ -99,9 +99,12 @@ def _attach_rationale(items: list[BundleItem], state: CodeIndexState, slug: str)
         return
     try:
         for item in items:
-            item.rationale = rationale_for_symbol(
-                store, repo_slug=slug, qualified_name=item.qualified_name
-            )
+            try:
+                item.rationale = rationale_for_symbol(
+                    store, repo_slug=slug, qualified_name=item.qualified_name
+                )
+            except Exception:
+                continue
     finally:
         store.close()
 
