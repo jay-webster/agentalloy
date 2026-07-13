@@ -42,7 +42,7 @@ from agentalloy.contracts import Contract, ContractScope
 from agentalloy.install import state as install_state
 from agentalloy.install.subcommands import write_env
 from agentalloy.reads.models import ActiveFragment
-from agentalloy.retrieval import lm_assist
+from agentalloy.retrieval import domain, lm_assist
 from agentalloy.retrieval.domain import (
     _contract_tag_filter_enabled,  # pyright: ignore[reportPrivateUsage]
     _deepen_band,  # pyright: ignore[reportPrivateUsage]
@@ -60,31 +60,49 @@ _DEAD_RERANK_PORT = 60001  # old default; pointed at an unrelated local service
 # of truth). Named by hardware target only — see write_env.VALID_PRESETS.
 _HW_PRESETS = ("cpu", "nvidia", "radeon", "apple-silicon")
 
-# Expected Stage B posture per preset. v6.6.0: ALL presets ship
-# LM_ASSIST=arbitrate with an eviction threshold — the 2026-07-08 investigation
-# (nightly 28931694381) showed the LM judge is the only mechanism that both
-# fixes the free-text process-skill slot leak (domain benchmark 0.816 vs 0.803
-# deterministic) AND keeps process skills reachable (name probes 0.93+ vs 0.44
-# under windowed demotion, which is now the opt-in AGENTALLOY_PROCESS_DEMOTION
-# fallback). The earlier "no eval lift" reading (v5.0.0 off) measured arbitrate
-# WITHOUT eviction: keep_threshold=0.0 keeps every candidate scoring >= 0, so
-# the judge re-ordered but never dropped — 0.05 is the load-bearing change
-# (judge scores are near-binary: filler exactly 0.0, relevant 0.86+).
+# Expected Stage B posture per preset: GPU presets ship LM_ASSIST=arbitrate with
+# an eviction threshold; CPU ships off. arbitrate is the only mechanism that both
+# fixes the free-text process-skill slot leak (domain 0.816 vs 0.803 deterministic)
+# AND keeps process skills reachable (name probes 0.93+ vs 0.44 under windowed
+# demotion), and 0.05 eviction is load-bearing (scores near-binary: filler 0.0,
+# relevant 0.86+). BUT it only fits the budget on GPU. The 2026-07-09 measurement
+# on the shipped `--parallel 1` reranker: real distinct-doc scoring ~1800ms/cand,
+# and production telemetry isolates Stage B at ~6.6s median / ~11s p90 vs the
+# 203ms deterministic path — 2.3x the 3000ms CPU budget. The prior "CPU viable
+# ~145ms/cand, 2.3s/16" figure was a KV-cache-reuse artifact (re-scoring identical
+# inputs), not the varied-fragment production path — so cpu ships off. GPU
+# (Vulkan/Metal) stays arbitrate (~120ms/cand ≈ 1.9s/16 fits). Free-text
+# coverage on LM-less deploys comes from E7v2 aboutness-gated demotion, whose
+# `auto` default activates exactly when arbitrate is absent (matrix below).
 _LM_ASSIST_BY_PRESET = {
-    "cpu": "arbitrate",
+    "cpu": "off",
     "nvidia": "arbitrate",
     "radeon": "arbitrate",
     "apple-silicon": "arbitrate",
 }
 
-# Per-hardware Stage B budget: CPU pays ~145ms/candidate at the --parallel 1
-# launcher config (16 candidates ~2.3s => 3s budget); GPU-class stays at 2s
-# (K=16 ~1s warm + cold-start headroom).
+# Per-hardware Stage B budget (only meaningful for arbitrate presets): GPU-class
+# stays at 2s (K=16 ~1s warm + cold-start headroom). cpu retains a 3000ms entry
+# for documentation only — Stage B is off there (see above), so it is never read.
 _LM_ASSIST_TIMEOUT_BY_PRESET = {
     "cpu": "3000",
     "nvidia": "2000",
     "radeon": "2000",
     "apple-silicon": "2000",
+}
+
+# Effective E7v2 process-demotion posture per preset under the `auto` default:
+# active exactly where Stage B arbitration is not (cpu — including the container
+# image, which ships LM_ASSIST=off), standing down where the LM makes the
+# process/filler judgment semantically (GPU presets). No preset sets
+# AGENTALLOY_PROCESS_DEMOTION explicitly — the coupling is the point: a future
+# LM_ASSIST posture change flips demotion coverage automatically instead of
+# repeating #377 (Stage B removed on CPU with no deterministic fallback armed).
+_PROCESS_DEMOTION_EFFECTIVE_BY_PRESET = {
+    "cpu": True,
+    "nvidia": False,
+    "radeon": False,
+    "apple-silicon": False,
 }
 
 # The .env.example template documents every knob; it's not a per-hardware source
@@ -102,6 +120,26 @@ def test_hw_presets_match_write_env() -> None:
     # and reporting all-green coverage of nothing.
     assert set(_HW_PRESETS) == set(write_env.VALID_PRESETS)
     assert set(_LM_ASSIST_BY_PRESET) == set(_HW_PRESETS)
+    assert set(_PROCESS_DEMOTION_EFFECTIVE_BY_PRESET) == set(_HW_PRESETS)
+
+
+@pytest.mark.parametrize("preset", _HW_PRESETS)
+def test_preset_process_demotion_posture(preset: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # E7v2 auto posture: evaluate _process_demotion_enabled() under exactly the
+    # env the preset renders. Presets must NOT pin AGENTALLOY_PROCESS_DEMOTION —
+    # the LM_ASSIST coupling (auto) is the mechanism under test.
+    defaults = write_env._load_preset(preset)
+    assert "AGENTALLOY_PROCESS_DEMOTION" not in defaults, (
+        f"{preset}: presets must not pin AGENTALLOY_PROCESS_DEMOTION; "
+        "the auto default derives it from LM_ASSIST"
+    )
+    monkeypatch.delenv("AGENTALLOY_PROCESS_DEMOTION", raising=False)
+    monkeypatch.setenv("LM_ASSIST", str(defaults.get("LM_ASSIST", "off")))
+    assert domain._process_demotion_enabled() == _PROCESS_DEMOTION_EFFECTIVE_BY_PRESET[preset], (
+        f"{preset}: effective process-demotion posture drifted from the matrix "
+        "(LM-less deploys need the deterministic fallback; arbitrate presets "
+        "must not double-transform)"
+    )
 
 
 def test_code_reranker_defaults_agree() -> None:
@@ -426,15 +464,16 @@ def test_pool_categories_dormant_by_default_and_on(monkeypatch: pytest.MonkeyPat
 
 
 def test_deepen_band_clamp(monkeypatch: pytest.MonkeyPatch) -> None:
-    # E4 ships inert: unset → 0.0 (legacy breadth-first).
+    # E4 ships ACTIVE at 0.85 (2026-07-10 K sweep: 0.8417@763 vs 0.8156@776 at
+    # 0.0 on LFM domain composed; generic neutral). 0.0 is the kill switch.
     monkeypatch.delenv("AGENTALLOY_DEEPEN_BAND", raising=False)
-    assert _deepen_band() == 0.0
-    monkeypatch.setenv("AGENTALLOY_DEEPEN_BAND", "0.85")
     assert _deepen_band() == 0.85
+    monkeypatch.setenv("AGENTALLOY_DEEPEN_BAND", "0.0")
+    assert _deepen_band() == 0.0  # kill switch → legacy breadth-first
     monkeypatch.setenv("AGENTALLOY_DEEPEN_BAND", "2.0")
     assert _deepen_band() == 1.0  # clamped to [0, 1]
     monkeypatch.setenv("AGENTALLOY_DEEPEN_BAND", "nope")
-    assert _deepen_band() == 0.0
+    assert _deepen_band() == 0.85  # malformed → default
 
 
 def test_contract_tag_filter_enabled_default_on_kill_switch_off(

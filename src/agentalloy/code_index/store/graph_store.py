@@ -25,7 +25,7 @@ from typing import Any
 
 import duckdb
 
-from agentalloy.storage.protocols import CallSite, CodeEdge, CodeSymbol
+from agentalloy.storage.protocols import CallSite, CodeEdge, CodeSymbol, DecisionRow
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,31 @@ class DuckDBCodeGraphStore:
 
     # -- symbol lookup -------------------------------------------------------------
 
+    def _resolve_qn(self, fqn: str) -> str:
+        """Tolerant map from a possibly-abbreviated ``fqn`` to a stored
+        ``qualified_name``. An exact match wins (fast path). Otherwise, if exactly
+        ONE stored name ends with ``fqn`` on a dot boundary, return it — this
+        rescues a natural fqn (``agentalloy.api.proxy_signal.SignalResult``) when the
+        store holds a doubled-prefix name (``agentalloy.src.agentalloy.api.``
+        ``proxy_signal.SignalResult``). On 0 or ≥2 suffix matches the input is
+        returned unchanged, so an ambiguous abbreviation resolves to a miss rather
+        than a wrong pick. LIKE metacharacters in ``fqn`` (notably ``_``, which
+        identifiers contain) are escaped so ``proxy_signal`` cannot match
+        ``proxyXsignal``."""
+        hit = self.conn.execute(
+            "SELECT 1 FROM symbols WHERE qualified_name = ? LIMIT 1", [fqn]
+        ).fetchone()
+        if hit is not None:
+            return fqn
+        esc = fqn.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = self.conn.execute(
+            "SELECT qualified_name FROM symbols WHERE qualified_name LIKE ? ESCAPE '\\' LIMIT 2",
+            ["%." + esc],
+        ).fetchall()
+        return str(rows[0][0]) if len(rows) == 1 else fqn
+
     def symbol(self, qualified_name: str) -> CodeSymbol | None:
+        qualified_name = self._resolve_qn(qualified_name)
         rows = self.conn.execute(
             f"SELECT {_SYMBOL_COLS} FROM symbols WHERE qualified_name = ?",
             [qualified_name],
@@ -279,6 +303,7 @@ class DuckDBCodeGraphStore:
         """Symbols that CALL ``fqn``. ``line`` is the call-site line in the
         caller's file (edge ``line_start``); file resolved via the denormalized
         ``symbols.file_path`` with the edge's own file as fallback."""
+        fqn = self._resolve_qn(fqn)
         rows = self.conn.execute(
             """
             SELECT e.src, COALESCE(s.file_path, NULLIF(e.file_path, '')), e.line_start
@@ -300,6 +325,7 @@ class DuckDBCodeGraphStore:
 
     def callees(self, fqn: str) -> list[CallSite]:
         """Symbols ``fqn`` CALLS. ``line`` is the callee's definition line."""
+        fqn = self._resolve_qn(fqn)
         rows = self.conn.execute(
             """
             SELECT e.dst, s.file_path, s.start_line
@@ -319,6 +345,94 @@ class DuckDBCodeGraphStore:
             for r in rows
         ]
 
+    # -- decisions (Knowledge module) ------------------------------------------
+
+    def symbols_by_name(self, name: str) -> list[tuple[str, str]]:
+        """Code symbols with the given short ``name`` (``MarkdownDoc`` excluded).
+
+        The store's only other symbol getter is exact-PK :meth:`symbol`; this is
+        the by-name lookup the decision-linkage tier-2 resolver needs. ``name`` is
+        unindexed, so this is a scan — acceptable at per-repo scale."""
+        rows = self.conn.execute(
+            "SELECT qualified_name, kind FROM symbols "
+            "WHERE name = ? AND kind != 'MarkdownDoc' ORDER BY qualified_name",
+            [name],
+        ).fetchall()
+        return [(str(r[0]), str(r[1])) for r in rows]
+
+    def governing_decisions(self, fqn: str) -> list[DecisionRow]:
+        """Decisions that GOVERN ``fqn`` — the ``callers()`` shape with the
+        ``GOVERNS`` edge kind. Reads ``e.src`` (the decision chunk) and hydrates
+        its heading (``symbols.name``) and body (``symbols.source_code``). One hop,
+        not transitive: a decision about ``fqn`` does not govern its callees."""
+        fqn = self._resolve_qn(fqn)
+        rows = self.conn.execute(
+            """
+            SELECT e.src, s.file_path, s.start_line, s.name, s.source_code
+            FROM edges e
+            LEFT JOIN symbols s ON s.qualified_name = e.src
+            WHERE e.kind = 'GOVERNS' AND e.dst = ?
+            ORDER BY e.src
+            """,
+            [fqn],
+        ).fetchall()
+        return [
+            DecisionRow(
+                qualified_name=str(r[0]),
+                file_path=None if r[1] is None else str(r[1]),
+                start_line=_opt_int(r[2]),
+                heading="" if r[3] is None else str(r[3]),
+                snippet=None if r[4] is None else str(r[4]),
+            )
+            for r in rows
+        ]
+
+    def decisions_for_files(self, file_paths: Sequence[str]) -> list[DecisionRow]:
+        """Decisions governing any symbol defined in ``file_paths`` — the
+        file-scoped analogue of :meth:`governing_decisions`. One indexed join
+        (`edges GOVERNS ⋈ symbols dst ON dst.file_path ∈ files`), `DISTINCT` so a
+        decision governing several touched files appears once."""
+        paths = list(file_paths)
+        if not paths:
+            return []
+        placeholders = ", ".join("?" for _ in paths)
+        rows = self.conn.execute(
+            f"""
+            SELECT DISTINCT e.src, d.file_path, d.start_line, d.name, d.source_code
+            FROM edges e
+            JOIN symbols code ON code.qualified_name = e.dst
+                             AND code.file_path IN ({placeholders})
+            LEFT JOIN symbols d ON d.qualified_name = e.src
+            WHERE e.kind = 'GOVERNS'
+            ORDER BY e.src
+            """,
+            paths,
+        ).fetchall()
+        return [
+            DecisionRow(
+                qualified_name=str(r[0]),
+                file_path=None if r[1] is None else str(r[1]),
+                start_line=_opt_int(r[2]),
+                heading="" if r[3] is None else str(r[3]),
+                snippet=None if r[4] is None else str(r[4]),
+            )
+            for r in rows
+        ]
+
+    def delete_govern_edges_for_doc(self, doc_path: str) -> int:
+        """Drop every ``GOVERNS`` edge rooted at ``doc_path`` (edges carry
+        ``file_path`` = the decision doc). Doc-granular, so re-derivation matches
+        the file-granularity of :meth:`delete_for_files`. Returns rows removed."""
+        n = self._scalar(
+            "SELECT count(*) FROM edges WHERE kind = 'GOVERNS' AND file_path = ?",
+            [doc_path],
+        )
+        self.conn.execute(
+            "DELETE FROM edges WHERE kind = 'GOVERNS' AND file_path = ?",
+            [doc_path],
+        )
+        return int(n or 0)
+
     def transitive_callers(self, fqn: str, *, max_depth: int = 4) -> list[CallSite]:
         """All symbols that (transitively) call ``fqn`` within ``max_depth`` hops.
 
@@ -329,6 +443,7 @@ class DuckDBCodeGraphStore:
         """
         if max_depth < 1:
             return []
+        fqn = self._resolve_qn(fqn)
         rows = self.conn.execute(
             """
             WITH RECURSIVE up(qn, depth) AS (

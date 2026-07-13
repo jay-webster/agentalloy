@@ -33,10 +33,19 @@ SCHEMA_VERSION = 1
 # a raw vector; a real store is a FragmentStore; a real install runs the rail.
 EmbedFn = Callable[[str], list[float]]
 InstallFn = Callable[..., dict[str, Any]]
+BlockerFn = Callable[[], "str | None"]
+RouteFn = Callable[[], Any]  # -> CorpusWriteRoute (lazy import to avoid a cycle)
+PushFn = Callable[..., dict[str, Any]]
 # symbol-linked-rationale: (repo_slug, qualified_name) -> does it exist in the
 # code index? A real resolver degrades to False on any failure (see
 # _default_symbol_exists); it never raises.
 SymbolResolverFn = Callable[[str, str], bool]
+
+# install_local_pack actions that leave the corpus in a good state. Anything
+# else (ingested_with_errors, schema_invalid, …, or a future action we don't
+# know) is treated as a failed install — fail closed, never report "promoted"
+# for a skill that isn't actually in the corpus (#390).
+_INSTALL_OK_ACTIONS = frozenset({"ingested", "already_installed", "version_unchanged"})
 
 
 def _default_symbol_exists(repo_slug: str, qualified_name: str) -> bool:
@@ -100,6 +109,66 @@ def probe_lesson_duplicates(
     return hard_hits
 
 
+def _corpus_write_blocker() -> str | None:
+    """Why the corpus can't be written right now, or ``None`` when it can (#390).
+
+    Two conditions make the install rail pointless or impossible, and both used
+    to surface only as a buried ingest error (or not at all):
+
+    - **Corpus lock** — DuckDB is single-writer per file and even the service's
+      read-only handle excludes a CLI writer, so ingest can never succeed while
+      a service is holding the store. Detected by briefly opening it read-write.
+    - **Serving container** — the live corpus lives inside the container's data
+      volume (``agentalloy-data:/app/data``); a host-side promote writes a host
+      corpus the serving container never reads.
+
+    Checked in that order, against *reality* rather than configured state: the
+    lock probe catches whatever process actually holds the host corpus (e.g. a
+    from-source native run on a container-configured box), and the container
+    check only fires when a container deployment is configured AND something is
+    actually serving the port — a stopped container blocks nothing.
+    """
+    from agentalloy.config import get_settings
+
+    db = Path(get_settings().duckdb_path)
+    if db.is_file():
+        try:
+            import duckdb
+
+            duckdb.connect(str(db)).close()
+        except Exception as exc:
+            if "lock" in str(exc).lower():
+                return (
+                    f"the corpus ({db}) is locked by the running AgentAlloy service. "
+                    "Stop it (`agentalloy server-stop`), re-run the promote, then "
+                    "`agentalloy server-start`."
+                )
+            return f"the corpus at {db} could not be opened for writing: {exc}"
+
+    try:
+        from agentalloy.install.server_proc import port_reachable, resolve_deployment
+
+        target = resolve_deployment()
+        if target.deployment == "container" and port_reachable(target.port):
+            return (
+                "the serving AgentAlloy is a container — its live corpus lives inside "
+                "the container's data volume, which a host-side promote cannot reach "
+                "(service-mediated ingest is tracked in #390)."
+            )
+    except Exception:
+        pass  # unreadable install state -> assume native; the lock probe above governs
+
+    return None
+
+
+def _install_failure_error(install_result: dict[str, Any]) -> str:
+    """One-line failure summary from an install result (first ingest stderr wins)."""
+    for r in install_result.get("ingest_results") or []:
+        if isinstance(r, dict) and r.get("outcome") == "failed" and r.get("stderr_tail"):
+            return str(r["stderr_tail"]).strip().splitlines()[-1]
+    return str(install_result.get("error") or install_result.get("action") or "install failed")
+
+
 def _default_embed() -> EmbedFn:
     from agentalloy.config import get_settings
     from agentalloy.embed_provider import get_embed_client
@@ -124,6 +193,8 @@ def promote_lesson(
     embed: EmbedFn | None = None,
     vector_store: Any | None = None,
     install: InstallFn | None = None,
+    route_fn: RouteFn | None = None,
+    push_fn: PushFn | None = None,
     symbol_resolver: SymbolResolverFn | None = None,
     skill_store: Any | None = None,
 ) -> dict[str, Any]:
@@ -133,8 +204,18 @@ def promote_lesson(
     ``skill_store`` seams are injected in tests; in production they resolve to
     the real embed client, the open fragment store, ``install_local_pack``, a
     read-only code-index symbol lookup, and the skill corpus store.
+    ``route_fn`` / ``push_fn`` select and drive the corpus-write route
+    (host-direct vs. the running service); they default to
+    :func:`decide_corpus_write_route` / :func:`push_pack_to_service`. The
+    host-side dedup probe runs only on the ``write_host`` path — on
+    ``via_service`` the endpoint owns the gate (and a container corpus can't be
+    probed from the host anyway).
     """
     from agentalloy.config import get_settings
+    from agentalloy.install.corpus_write_route import (
+        decide_corpus_write_route,
+        push_pack_to_service,
+    )
 
     # Validate before any path construction — `slug` is user-controlled (a CLI
     # arg) and is used directly to build the lesson-read path below. Mirrors
@@ -169,6 +250,49 @@ def promote_lesson(
     pack_dir = Path(gen["pack_dir"])
     fragment_texts: list[str] = gen["fragment_contents"]
 
+    # --- corpus-write routing (#390) ---------------------------------------
+    # Runs after generation (the pack on disk is still useful). The route picks
+    # where the write goes: the running service (native or container), a direct
+    # host write, or — when neither is possible — an honest block.
+    route = (route_fn or decide_corpus_write_route)()
+    if route.mode == "blocked":
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "action": "install_blocked",
+            "slug": slug,
+            "skill_id": gen["skill_id"],
+            "pack_dir": str(pack_dir),
+            "error": f"pack generated but NOT installed: {route.reason}",
+            "remediation": (
+                f"once the corpus is writable, install it with `agentalloy install-pack {pack_dir}`."
+            ),
+        }
+
+    if route.mode == "via_service":
+        # The service owns the dedup gate and the install; the host never probes
+        # (it can't reach a container corpus). Its dedup verdicts surface as-is;
+        # everything else runs through the shared finalizer.
+        install_result = (push_fn or push_pack_to_service)(
+            pack_dir, route=route, allow_duplicates=allow_duplicates, reembed=True
+        )
+        action = install_result.get("action")
+        if action in ("duplicate_refused", "dedup_probe_failed"):
+            install_result.setdefault("schema_version", SCHEMA_VERSION)
+            install_result.setdefault("slug", slug)
+            install_result.setdefault("skill_id", gen["skill_id"])
+            install_result.setdefault("pack_dir", str(pack_dir))
+            return install_result
+        return _link_lesson_symbols(
+            _finalize_promote(install_result, slug=slug, gen=gen, pack_dir=pack_dir, hard_hits=[]),
+            slug=slug,
+            lesson_path=lesson_path,
+            root=root,
+            gen=gen,
+            symbol_resolver=symbol_resolver,
+            skill_store=skill_store,
+        )
+
+    # else: write_host — the direct host-side probe + install below.
     settings = get_settings()
 
     # --- pre-ingest dedup probe -------------------------------------------
@@ -243,10 +367,89 @@ def promote_lesson(
 
         install_fn = install_local_pack
     install_result = install_fn(pack_dir, root=root, strict=True, allow_duplicates=allow_duplicates)
+    return _link_lesson_symbols(
+        _finalize_promote(
+            install_result, slug=slug, gen=gen, pack_dir=pack_dir, hard_hits=hard_hits
+        ),
+        slug=slug,
+        lesson_path=lesson_path,
+        root=root,
+        gen=gen,
+        symbol_resolver=symbol_resolver,
+        skill_store=skill_store,
+    )
 
-    # --- symbol-linked-rationale: resolve + link named symbols -------------
-    # Additive only — a resolution/linking failure must never turn a
-    # successful promotion into a failed one (see design §4).
+
+def _finalize_promote(
+    install_result: dict[str, Any],
+    *,
+    slug: str,
+    gen: dict[str, Any],
+    pack_dir: Path,
+    hard_hits: list[Any],
+) -> dict[str, Any]:
+    """Map an install result (host-direct or service-mediated) to a promote result.
+
+    Fail closed on the install leg (#390): "promoted" previously reported
+    success even when the rail rolled everything back (e.g. the running service
+    held the corpus lock), leaving a skill retrieval can never surface. Any
+    action outside the known-good set is a failed install (AC-10 — same shape
+    whichever path produced the result).
+    """
+    install_action = install_result.get("action")
+    if install_action is not None and install_action not in _INSTALL_OK_ACTIONS:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "action": "install_failed",
+            "slug": slug,
+            "skill_id": gen["skill_id"],
+            "pack_dir": str(pack_dir),
+            "install": install_result,
+            "error": (
+                f"pack generated but the corpus install failed "
+                f"({install_action}): {_install_failure_error(install_result)}"
+            ),
+            "remediation": str(
+                install_result.get("remediation")
+                or f"fix the failure and re-run `agentalloy install-pack {pack_dir}`."
+            ),
+        }
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "action": "promoted",
+        "slug": slug,
+        "skill_id": gen["skill_id"],
+        "pack_dir": str(pack_dir),
+        "domain_tags": gen.get("domain_tags"),
+        "soft_or_forced_duplicates": sorted({getattr(h, "skill_id", "?") for h in hard_hits})
+        or None,
+        "install": install_result,
+    }
+
+
+def _link_lesson_symbols(
+    result: dict[str, Any],
+    *,
+    slug: str,
+    lesson_path: Path,
+    root: Path,
+    gen: dict[str, Any],
+    symbol_resolver: SymbolResolverFn | None,
+    skill_store: Any | None,
+) -> dict[str, Any]:
+    """Resolve + link a promoted lesson's declared symbols (symbol-linked-rationale).
+
+    Additive only — a resolution/linking failure must never turn a successful
+    promotion into a failed one. A no-op unless ``result["action"] == "promoted"``,
+    so it applies the same way after either corpus-write route (host-direct or
+    via_service) that :func:`_finalize_promote` can report success for.
+    """
+    if result.get("action") != "promoted":
+        return result
+
+    from agentalloy.config import get_settings
+
     unresolved_symbols: list[str] = []
     lesson_text = lesson_path.read_text(encoding="utf-8")
     symbol_names = _lesson_symbols(lesson_text)
@@ -284,18 +487,8 @@ def promote_lesson(
                     if not store_provided:
                         store.close()
 
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "action": "promoted",
-        "slug": slug,
-        "skill_id": gen["skill_id"],
-        "pack_dir": str(pack_dir),
-        "domain_tags": gen.get("domain_tags"),
-        "soft_or_forced_duplicates": sorted({getattr(h, "skill_id", "?") for h in hard_hits})
-        or None,
-        "install": install_result,
-        "unresolved_symbols": unresolved_symbols,
-    }
+    result["unresolved_symbols"] = unresolved_symbols
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +531,10 @@ def _render_human(result: dict[str, Any]) -> None:
             print_rich(f"  [yellow]note[/yellow]: installed over near-duplicate(s) {forced}")
     elif action == "duplicate_refused":
         print_rich(f"  [red]refused[/red]: {result.get('error')}")
+    elif action in ("install_blocked", "install_failed"):
+        print_rich(f"  [red]not installed[/red]: {result.get('error')}")
+        if result.get("remediation"):
+            print_rich(f"  remediation: {result.get('remediation')}")
     else:
         print_rich(f"  [red]FAILED[/red]: {result.get('error', action)}")
     print_rich()

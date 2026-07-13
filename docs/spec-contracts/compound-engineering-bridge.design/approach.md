@@ -37,15 +37,25 @@ falsely reports `NOT_MET`. A slug-scoped existence check is order-independent.
 
 **Slug resolution (spike D1 — resolved).** The canonical resolver is
 `_resolve_current_contract(cwd, phase)` (`api/proxy_signal.py:164`):
-cursor-first (`.agentalloy/cursor`, written by `agentalloy task next`, ordered by
-filename), then the sole `contracts/<phase>/*.md` if exactly one exists, else
-`(None, None)` — it deliberately *refuses to guess* when several coexist with no
-cursor. `lessons_recorded` reuses it against `ctx.current_phase` and takes
-`Path(...).stem` as the slug; `(None, None)` → `UNKNOWN` (mirroring how Tier-2
-composition stays silent). `latest_contract` (mtime, `contracts.py:387`) is a
+cursor-first (`.agentalloy/cursor`, written by `agentalloy task next`), then the
+sole `contracts/<phase>/*.md` if exactly one exists, else — for an uncursored
+fan-out (≥2) — the newest by mtime (per PR #376: a tag-scoped compose of the
+most-recent work-item beats a filler-leaking free-text fallback), and `(None,
+None)` only when zero contracts exist. `lessons_recorded` reuses it against
+`ctx.current_phase` and takes `Path(...).stem` as the slug; `(None, None)` →
+`UNKNOWN`. (The codify gate lives on qa, a single-contract phase, so the fan-out
+branch never applies to it; and slug-scoping means AC 2 holds regardless of which
+contract is resolved.) `latest_contract` (mtime, `contracts.py:387`) is a
 footgun here — it ignores the cursor, disagrees with `task next`'s filename
 ordering, and can select a stale prior-cycle contract (nothing deletes old
 contracts; only the cursor is cleared on transition).
+
+> **Amended by D6 (post-merge).** The `origin/main` merge relaxed the resolver to
+> the newest-by-mtime fan-out fallback described above, which — shared with this
+> gate — could block against an mtime-*guessed* slug. D6 resolves this: the
+> resolver is **cursor-strict** again and the cursor is **seeded on phase entry**,
+> so `lessons_recorded` resolves the seeded work-item and only a genuinely
+> uncursored fan-out fails open (`UNKNOWN`). See D6 below.
 
 **Layering fix (required, folded into task 01).** `_resolve_current_contract`
 lives in the `api` layer, but predicates live in `signals`, and `signals` must
@@ -139,6 +149,34 @@ written, so AC 5's "not left served in the corpus" holds without inventing an
 uninstall path (which doesn't exist today). The probe reuses the same embed
 model and classifier the rail uses, so its verdict matches what the rail would
 have reported.
+
+### D6 — Post-merge: cursor is the single source of truth (Outcome B)
+
+**Decision (post-merge reconciliation with #376/#377).** When this branch merged
+`origin/main`, the shared `resolve_current_contract` was reconciled to #376's
+newest-by-mtime fan-out fallback — but D1's gate and predicate were authored for a
+**cursor-strict** resolver. The two callers then disagreed: the proxy wanted a
+best-effort guess (avoid free-text filler), the gate needed strictness (never
+block on a guess). Left as-is, the qa→ship gate could block against an
+mtime-guessed slug whenever `contracts/qa/` held ≥2 uncursored contracts, and
+mtime is fragile (git checkout/clone reset it).
+
+Resolved by making the **cursor the single source of truth**, reliably set:
+
+- **Seed on phase entry.** `_write_phase_atomic` (proxy) and `run_phase_set` (CLI)
+  now seed `.agentalloy/cursor` to the new phase's first work-item by filename
+  order (`contracts.first_workitem_id`, shared with `task.py`'s ordering) instead
+  of clearing it. A phase with no contracts still clears. `task next` advances it.
+- **Resolver goes strict.** `resolve_current_contract`: cursor → single-item →
+  fan-out `(None, None)`. With seeding, the fan-out floor is rarely reached; when
+  it is, the proxy composes nothing and the gate fails open (`UNKNOWN`) — neither
+  guesses.
+
+Both consumers now read one cursor. #376's goal (no free-text filler) is met more
+robustly — a seeded cursor means composition is always tag-scoped, not
+mtime-guessed — and this supersedes #376's mtime fallback. Verified via the
+`test_phase_transition_seeds_*` and `test_tier2_*`/`test_ambiguous_fanout_is_unknown`
+suites and a live `phase set` → seeded-cursor CLI check.
 
 ## Non-goals carried from spec
 

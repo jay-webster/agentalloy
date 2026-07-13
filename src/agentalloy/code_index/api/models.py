@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from agentalloy.code_index.store import CodeIndexJob, IndexedRepo
 from agentalloy.reads.models import RationaleHit
-from agentalloy.storage.protocols import CallSite, CodeSymbol
+from agentalloy.storage.protocols import CallSite, CodeSymbol, DecisionRow
 
 
 class IndexRequest(BaseModel):
@@ -155,13 +155,28 @@ class CallSiteView(BaseModel):
         return cls(qualified_name=s.qualified_name, file_path=s.file_path, line=s.line)
 
 
-class CentralitySymbol(BaseModel):
-    """One top-centrality row hydrated with its location."""
+class DecisionView(BaseModel):
+    """One decision governing the queried symbol (Knowledge module).
+
+    Distinct from ``CallSiteView``: a decision is a markdown heading-chunk, so it
+    carries a ``heading`` and body ``snippet`` and its ``start_line`` is a heading
+    offset — not a call site."""
 
     qualified_name: str
-    pagerank: float
     file_path: str | None
     start_line: int | None
+    heading: str
+    snippet: str | None
+
+    @classmethod
+    def from_decision(cls, d: DecisionRow) -> DecisionView:
+        return cls(
+            qualified_name=d.qualified_name,
+            file_path=d.file_path,
+            start_line=d.start_line,
+            heading=d.heading,
+            snippet=d.snippet,
+        )
 
 
 class RationaleHitView(BaseModel):
@@ -173,3 +188,12 @@ class RationaleHitView(BaseModel):
     @classmethod
     def from_hit(cls, h: RationaleHit) -> RationaleHitView:
         return cls(skill_id=h.skill_id, rationale=h.rationale)
+
+
+class CentralitySymbol(BaseModel):
+    """One top-centrality row hydrated with its location."""
+
+    qualified_name: str
+    pagerank: float
+    file_path: str | None
+    start_line: int | None
