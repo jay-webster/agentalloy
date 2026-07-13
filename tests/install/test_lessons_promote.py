@@ -492,6 +492,7 @@ def test_resolving_symbols_create_link_rows(tmp_path: Path):
         embed=_embed,
         vector_store=_FakeStore([]),
         install=_fake_install,
+        route_fn=_WRITE_HOST,
         symbol_resolver=lambda repo, name: True,  # everything resolves
         skill_store=store,
     )
@@ -524,6 +525,7 @@ def test_unresolvable_symbol_reported_not_linked_promotion_still_succeeds(tmp_pa
         embed=_embed,
         vector_store=_FakeStore([]),
         install=_fake_install,
+        route_fn=_WRITE_HOST,
         symbol_resolver=_resolver,
         skill_store=store,
     )
@@ -552,6 +554,7 @@ def test_no_code_index_degrades_every_symbol_to_unresolved(tmp_path: Path, monke
         embed=_embed,
         vector_store=_FakeStore([]),
         install=_fake_install,
+        route_fn=_WRITE_HOST,
         # no symbol_resolver override -> exercises the real _default_symbol_exists,
         # which must degrade to False via the patched open_code_index, never raise.
     )
@@ -573,6 +576,7 @@ def test_lesson_with_no_symbols_line_is_unaffected(tmp_path: Path):
         embed=_embed,
         vector_store=_FakeStore([]),
         install=_fake_install,
+        route_fn=_WRITE_HOST,
         symbol_resolver=_resolver_should_not_be_called,
     )
     assert res["action"] == "promoted"
@@ -596,6 +600,7 @@ def test_link_repo_slug_matches_code_index_slug_helper(tmp_path: Path):
         embed=_embed,
         vector_store=_FakeStore([]),
         install=_fake_install,
+        route_fn=_WRITE_HOST,
         symbol_resolver=lambda repo, name: True,
         skill_store=store,
     )
