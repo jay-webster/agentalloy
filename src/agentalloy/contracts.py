@@ -31,6 +31,7 @@ Format::
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -340,6 +341,33 @@ def list_contracts_for_phase(project_root: Path, phase: str) -> list[Path]:
     return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
 
 
+def ordered_contracts_for_phase(project_root: Path, phase: str) -> list[Path]:
+    """Return contracts/<phase>/*.md in FILENAME order (``01-``, ``02-``, …).
+
+    The design phase numbers build work-items by filename prefix to fix the
+    worklist order, so this — not the mtime order of ``list_contracts_for_phase``
+    — is the correct sequence for "which task is first/next". The single ordering
+    definition shared by the ``task`` cursor commands and phase-entry seeding.
+    """
+    contracts_dir = project_root / ".agentalloy" / "contracts" / phase
+    if not contracts_dir.is_dir():
+        return []
+    return sorted((f for f in contracts_dir.glob("*.md") if f.is_file()), key=lambda f: f.name)
+
+
+def first_workitem_id(project_root: Path, phase: str) -> str | None:
+    """The first work-item of ``phase`` (filename order) as a cursor id
+    (``<phase>/<file>.md``), or ``None`` when the phase has no contracts.
+
+    Used to seed ``.agentalloy/cursor`` on phase entry so the current work-item
+    is reliably set without waiting for the agent's first ``agentalloy task next``.
+    """
+    contracts = ordered_contracts_for_phase(project_root, phase)
+    if not contracts:
+        return None
+    return f"{phase}/{contracts[0].name}"
+
+
 @dataclass(frozen=True)
 class CodeIndexQuery:
     """Parameters for an in-process code-index search derived from a contract.
@@ -384,41 +412,80 @@ def code_index_query_params(contract: Contract, project_root: Path) -> CodeIndex
     )
 
 
-def _read_cursor_value(project_root: Path) -> str | None:
-    """Read the work-item cursor from ``.agentalloy/cursor`` (a contracts-relative id).
+def cursor_state_name(session_key: str | None) -> str:
+    """Backing filename for the work-item cursor, session-scoped when possible.
 
-    Mirrors ``skill_loader._read_cursor`` but lives here so this low-level module
-    can resolve the current work-item without importing the signals/api layers.
-    Returns ``None`` when absent or empty.
+    A repo has ONE ``.agentalloy/contracts`` tree but may be driven by several
+    concurrent sessions; a single shared ``.agentalloy/cursor`` lets one session's
+    ``task start`` clobber another's current work-item (Bug C). Scoping the cursor
+    file by the session key isolates them: ``cursor.<sha1(key)[:16]>`` when a key is
+    known, else the shared ``cursor`` (single-session, non-Claude-Code harnesses,
+    and every pre-scoping repo — the back-compat floor). The key is the same value
+    on both sides: the proxy's ``x-claude-code-session-id`` header and the CLI's
+    ``CLAUDE_CODE_SESSION_ID`` env var are the one session UUID, so a scoped write
+    by the CLI is read back by the proxy (and vice versa) across the container bind
+    mount. The cursor is deliberately NOT a relocated runtime-state key, so scoped
+    files stay in the repo tree where both sides see them."""
+    if not session_key:
+        return "cursor"
+    digest = hashlib.sha1(session_key.encode("utf-8")).hexdigest()[:16]  # noqa: S324 non-crypto id
+    return f"cursor.{digest}"
+
+
+def _read_cursor_value(project_root: Path, session_key: str | None = None) -> str | None:
+    """Read the work-item cursor (a contracts-relative id).
+
+    Reads the session-scoped file first (``cursor.<hash>``), then falls back to the
+    shared ``cursor`` — so a session that never scoped, and every pre-scoping repo,
+    resolve exactly as before. Mirrors ``skill_loader._read_cursor`` but lives here
+    so this low-level module can resolve the current work-item without importing the
+    signals/api layers. Returns ``None`` when absent or empty.
     """
-    try:
-        raw = (project_root / ".agentalloy" / "cursor").read_text(encoding="utf-8")
-    except OSError:
-        return None
-    value = raw.strip()
-    return value or None
+    names = [cursor_state_name(session_key)]
+    if names[0] != "cursor":
+        names.append("cursor")  # shared fallback
+    for name in names:
+        try:
+            raw = (project_root / ".agentalloy" / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        value = raw.strip()
+        if value:
+            return value
+    return None
 
 
-def resolve_current_contract(project_root: Path, phase: str) -> tuple[str | None, Path | None]:
+def resolve_current_contract(
+    project_root: Path, phase: str, session_key: str | None = None
+) -> tuple[str | None, Path | None]:
     """Resolve the current work-item contract for ``phase``.
 
     Returns ``(contract_id, abs_path)`` where ``contract_id`` is the
     contracts-relative posix path (e.g. ``build/01-cache.md``) and ``abs_path`` is
     the file to use. Resolution order:
 
-    1. An explicit ``.agentalloy/cursor`` (set by ``agentalloy task next``) that
-       resolves to a file contained under ``.agentalloy/contracts/``.
+    1. An explicit ``.agentalloy/cursor`` that resolves to a file under
+       ``.agentalloy/contracts/`` (set by phase-entry seeding — see
+       ``first_workitem_id`` — or advanced by ``agentalloy task next``).
     2. Exactly one contract in ``contracts/<phase>/`` → that single work-item
        (the common single-item phase: spec/design/qa/ship).
-    3. Zero, or ≥2 with no cursor (a build fan-out) → ``(None, None)``: don't guess.
+    3. ≥2 with no cursor (an uncursored build fan-out) → ``(None, None)``: don't
+       guess. This is the fail-safe floor, not the normal path — the cursor is
+       seeded to the first work-item on phase entry (``_write_phase_atomic`` /
+       ``run_phase_set``) and advanced by ``task next``, so a live phase almost
+       always has a cursor. Both consumers depend on this strictness: the proxy
+       composes nothing (rather than a mis-scoped guess) and the
+       ``lessons_recorded`` gate fails open (UNKNOWN) rather than block against a
+       guessed slug.
+    4. Zero contracts → ``(None, None)``.
 
-    This is the canonical resolver shared by the proxy (Tier 2 domain composition)
-    and the ``lessons_recorded`` gate predicate — both must agree on "which task
-    is current", so neither may fall back to ``latest_contract`` (newest by mtime),
-    which ignores the cursor and can select a stale prior-cycle contract.
+    The single source of truth is the cursor. This resolver never falls back to
+    ``latest_contract`` (newest by mtime): mtime is fragile — git checkout/clone
+    reset it — and, shared with a correctness gate, a newest-by-mtime guess could
+    satisfy or block the gate against the wrong task.
     """
     contracts_root = (project_root / ".agentalloy" / "contracts").resolve()
-    cursor = _read_cursor_value(project_root)
+    cursor = _read_cursor_value(project_root, session_key)
     if cursor:
         candidate = (contracts_root / cursor).resolve()
         # Containment guard: a stale/hostile cursor must not read outside the tree.
@@ -428,7 +495,7 @@ def resolve_current_contract(project_root: Path, phase: str) -> tuple[str | None
 
     in_phase = list_contracts_for_phase(project_root, phase)
     if len(in_phase) != 1:
-        # 0 → nothing current; ≥2 → fan-out, wait for the cursor.
+        # 0 → nothing current; ≥2 with no cursor → fan-out, don't guess.
         return None, None
     only = in_phase[0].resolve()
     return only.relative_to(contracts_root).as_posix(), only

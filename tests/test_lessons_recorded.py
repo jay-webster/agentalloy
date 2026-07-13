@@ -66,10 +66,30 @@ def test_no_workitem_is_unknown(tmp_path: Path):
 
 
 def test_ambiguous_fanout_is_unknown(tmp_path: Path):
+    # ≥2 contracts, no cursor -> the strict resolver yields no single work-item ->
+    # UNKNOWN (fail-open). The gate never blocks against a guessed slug. In normal
+    # flow the cursor is seeded on phase entry (see the next test), so this is the
+    # fail-safe floor, not the common path.
     _qa_contract(tmp_path, "feat-x")
     _qa_contract(tmp_path, "feat-y")
-    # two contracts, no cursor -> refuse to guess -> UNKNOWN
     assert eval_lessons_recorded({}, _ctx(tmp_path)) is UNKNOWN
+
+
+def test_phase_entry_seeds_gate_scope(tmp_path: Path):
+    # Entering qa seeds the cursor to the first work-item (filename order); the gate
+    # then resolves THAT slug deterministically — blocks until its lesson exists.
+    from agentalloy.signals.skill_loader import (  # type: ignore[reportPrivateUsage]
+        _write_phase_atomic,
+    )
+
+    _qa_contract(tmp_path, "01-alpha")
+    _qa_contract(tmp_path, "02-beta")
+    (tmp_path / ".agentalloy" / "phase").write_text("phase: build\n")  # enter qa from elsewhere
+    _write_phase_atomic(tmp_path, "qa")
+    # seeded to 01-alpha; its lesson is absent -> NOT_MET (blocks), not UNKNOWN
+    assert eval_lessons_recorded({}, _ctx(tmp_path)) is NOT_MET
+    _write(tmp_path / "docs" / "solutions" / "01-alpha.md", "# lesson")
+    assert eval_lessons_recorded({}, _ctx(tmp_path)) is MET
 
 
 def test_cursor_selects_slug(tmp_path: Path):
