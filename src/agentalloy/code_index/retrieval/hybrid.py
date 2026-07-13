@@ -25,10 +25,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agentalloy.code_index.ingest.embed_text import MAX_EMBED_TEXT_CHARS
 from agentalloy.code_index.store import open_code_index
+from agentalloy.reads.models import RationaleHit
 from agentalloy.storage.protocols import CodeGraphStore, CodeSearchHit, CodeSymbol
 
 if TYPE_CHECKING:
@@ -117,6 +118,7 @@ class SearchResult(BaseModel):
     end_line: int | None
     score: float
     snippet: str
+    rationale: list[RationaleHit] = Field(default_factory=list)
 
 
 def _snippet(sym: CodeSymbol) -> str:
@@ -202,6 +204,30 @@ def _rrf_fuse(dense_order: list[str], bm25_order: list[str]) -> list[tuple[str, 
 # ---------------------------------------------------------------------------
 
 
+def _attach_rationale(results: list[SearchResult], state: CodeIndexState, slug: str) -> None:
+    """Best-effort: populate each result's ``rationale`` from the skill
+    corpus. A missing/unreachable corpus degrades to no rationale for the
+    whole call, never raises (mirrors ``symbols_router.py``'s
+    ``symbol_rationale``)."""
+    from agentalloy.reads.rationale_links import rationale_for_symbol
+    from agentalloy.storage.open import open_skills
+
+    try:
+        store = open_skills(state.settings, read_only=True)
+    except Exception:
+        return
+    try:
+        for r in results:
+            try:
+                r.rationale = rationale_for_symbol(
+                    store, repo_slug=slug, qualified_name=r.qualified_name
+                )
+            except Exception:
+                continue
+    finally:
+        store.close()
+
+
 def _embed_query(state: CodeIndexState, query: str) -> list[float]:
     text = finalize_query_text(rewrite_query(query))
     vectors = state.embed_client.embed(model=state.settings.runtime_embedding_model, texts=[text])
@@ -237,9 +263,11 @@ async def semantic_search(
             bm25 = handles.vectors.search_bm25(query, k=_FETCH_K)
 
             ranked = _rrf_fuse([h.qualified_name for h in fused_dense], [qn for qn, _score in bm25])
-            return _hydrate(handles.graph, ranked, k=k, dense_by_qn=dense_by_qn)
+            results = _hydrate(handles.graph, ranked, k=k, dense_by_qn=dense_by_qn)
         finally:
             handles.close()
+        _attach_rationale(results, state, slug)
+        return results
 
     return await asyncio.to_thread(_search)
 
@@ -253,8 +281,10 @@ async def lexical_search(
         handles = open_code_index(state.settings, slug, role="service")
         try:
             ranked = handles.vectors.search_bm25(query, k=k)
-            return _hydrate(handles.graph, ranked, k=k, dense_by_qn={})
+            results = _hydrate(handles.graph, ranked, k=k, dense_by_qn={})
         finally:
             handles.close()
+        _attach_rationale(results, state, slug)
+        return results
 
     return await asyncio.to_thread(_search)

@@ -24,10 +24,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agentalloy.code_index.retrieval.hybrid import semantic_search
 from agentalloy.code_index.store import open_code_index
+from agentalloy.reads.models import RationaleHit
 
 if TYPE_CHECKING:
     from agentalloy.code_index.api.state import CodeIndexState
@@ -63,6 +64,7 @@ class BundleItem(BaseModel):
     score: float
     reason: Reason
     source: str
+    rationale: list[RationaleHit] = Field(default_factory=list)
 
 
 class Bundle(BaseModel):
@@ -81,6 +83,30 @@ def _is_test_path(qualified_name: str, file_path: str | None) -> bool:
     to path form so registry-less symbols still get classified)."""
     probe = (file_path or qualified_name.replace(".", "/")).lower()
     return any(marker in probe for marker in _TEST_PATH_MARKERS)
+
+
+def _attach_rationale(items: list[BundleItem], state: CodeIndexState, slug: str) -> None:
+    """Best-effort: populate each item's ``rationale`` from the skill
+    corpus. A missing/unreachable corpus degrades to no rationale for the
+    whole call, never raises (mirrors ``symbols_router.py``'s
+    ``symbol_rationale``)."""
+    from agentalloy.reads.rationale_links import rationale_for_symbol
+    from agentalloy.storage.open import open_skills
+
+    try:
+        store = open_skills(state.settings, read_only=True)
+    except Exception:
+        return
+    try:
+        for item in items:
+            try:
+                item.rationale = rationale_for_symbol(
+                    store, repo_slug=slug, qualified_name=item.qualified_name
+                )
+            except Exception:
+                continue
+    finally:
+        store.close()
 
 
 async def build_bundle(
@@ -148,7 +174,7 @@ async def build_bundle(
                 if total >= budget_chars:
                     break
 
-            return Bundle(
+            bundle = Bundle(
                 repo=slug,
                 task=task,
                 budget_chars=budget_chars,
@@ -158,5 +184,7 @@ async def build_bundle(
             )
         finally:
             handles.close()
+        _attach_rationale(bundle.items, state, slug)
+        return bundle
 
     return await asyncio.to_thread(_assemble)
