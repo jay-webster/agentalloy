@@ -368,7 +368,9 @@ def promote_lesson(
         install_fn = install_local_pack
     install_result = install_fn(pack_dir, root=root, strict=True, allow_duplicates=allow_duplicates)
     return _link_lesson_symbols(
-        _finalize_promote(install_result, slug=slug, gen=gen, pack_dir=pack_dir, hard_hits=hard_hits),
+        _finalize_promote(
+            install_result, slug=slug, gen=gen, pack_dir=pack_dir, hard_hits=hard_hits
+        ),
         slug=slug,
         lesson_path=lesson_path,
         root=root,
