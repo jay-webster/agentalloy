@@ -65,9 +65,7 @@ TARGETS: list[tuple[str, Path, Path]] = [
     *[
         (
             f"{slug}-lesson-mutated",
-            REPO
-            / "docs/qa/gemma-4-critic-model-trial/mutated-cases"
-            / f"{slug}-lesson.yaml",
+            REPO / "docs/qa/gemma-4-critic-model-trial/mutated-cases" / f"{slug}-lesson.yaml",
             REPO / "docs/solutions" / f"{slug}.md",
         )
         for slug in _MUTATED_SLUGS
@@ -184,7 +182,9 @@ def main() -> int:
     for r in results:
         print(f"  {r['verdict']:<8} {r['case_id']:<48} {r['elapsed_s']:.2f}s")
 
-    agg_path = REPO / "docs/qa/gemma-4-critic-model-trial" / f"aggregate-{_fs_safe(critic_model)}.json"
+    agg_path = (
+        REPO / "docs/qa/gemma-4-critic-model-trial" / f"aggregate-{_fs_safe(critic_model)}.json"
+    )
     agg_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"\nWrote aggregate: {agg_path.relative_to(REPO)}")
     return 0

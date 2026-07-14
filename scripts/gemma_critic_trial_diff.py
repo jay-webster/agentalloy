@@ -23,10 +23,42 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 _STOPWORDS = {
-    "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for",
-    "with", "as", "is", "was", "were", "be", "been", "being", "this",
-    "that", "it", "its", "at", "by", "from", "into", "not", "no", "any",
-    "one", "exactly", "named", "violation", "rule", "sentence",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "of",
+    "to",
+    "in",
+    "on",
+    "for",
+    "with",
+    "as",
+    "is",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "this",
+    "that",
+    "it",
+    "its",
+    "at",
+    "by",
+    "from",
+    "into",
+    "not",
+    "no",
+    "any",
+    "one",
+    "exactly",
+    "named",
+    "violation",
+    "rule",
+    "sentence",
 }
 
 
@@ -65,8 +97,12 @@ def _defect_hit(defect_text: str, blocking_text: str) -> tuple[bool, set[str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("baseline_json", type=Path, help="Aggregate JSON from the baseline critic model run")
-    parser.add_argument("candidate_json", type=Path, help="Aggregate JSON from the candidate critic model run")
+    parser.add_argument(
+        "baseline_json", type=Path, help="Aggregate JSON from the baseline critic model run"
+    )
+    parser.add_argument(
+        "candidate_json", type=Path, help="Aggregate JSON from the candidate critic model run"
+    )
     args = parser.parse_args()
 
     baseline = _load_aggregate(args.baseline_json)
@@ -128,8 +164,12 @@ def main() -> int:
                 b_hit, b_matched = _defect_hit(defect_text, _blocking_text(b))
                 c_hit, c_matched = _defect_hit(defect_text, _blocking_text(c))
                 print(f"  [mutated] defect: {defect_text.strip()}")
-                print(f"  [mutated] baseline caught it: {b_hit} (matched keywords: {sorted(b_matched)})")
-                print(f"  [mutated] candidate caught it: {c_hit} (matched keywords: {sorted(c_matched)})")
+                print(
+                    f"  [mutated] baseline caught it: {b_hit} (matched keywords: {sorted(b_matched)})"
+                )
+                print(
+                    f"  [mutated] candidate caught it: {c_hit} (matched keywords: {sorted(c_matched)})"
+                )
                 mutated_rows.append((case_id, b_hit, c_hit))
         print()
 
@@ -139,7 +179,9 @@ def main() -> int:
     else:
         print("Verdict agreement: n/a (no comparable cases)")
     if ratios:
-        print(f"Mean latency ratio (candidate/baseline): {sum(ratios) / len(ratios):.2f}x over {len(ratios)} cases")
+        print(
+            f"Mean latency ratio (candidate/baseline): {sum(ratios) / len(ratios):.2f}x over {len(ratios)} cases"
+        )
     else:
         print("Mean latency ratio: n/a")
 
