@@ -27,7 +27,7 @@ class AuthoringConfig(BaseSettings):
     )
 
     model: str = "qwen3-14b-instruct"
-    critic_model: str = "qwen3.6-27b"
+    critic_model: str = "gemma-4-26b-a4b-it-mlx"
     lm_base_url: str = "http://localhost:11435"
     lm_studio_base_url: str = "http://localhost:11434"
     embed_base_url: str = "http://localhost:11436"
