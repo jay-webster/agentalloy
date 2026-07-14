@@ -6,6 +6,23 @@ explicitly fetches. The routine has a Google Drive MCP connector attached
 (Gmail is not available to routines — see the drive-sync spec for why this
 routine exists at all).
 
+## Environment requirements
+
+Attaching a `Google-Drive` entry under the trigger's `mcp_connections` is
+**not sufficient** on its own for steps 1/2/6 below to work. The trigger's
+`job_config.ccr.session_context.allowed_tools` must *also* explicitly list:
+
+- `mcp__Google-Drive__search_files`
+- `mcp__Google-Drive__download_file_content`
+- `mcp__Google-Drive__create_file`
+
+and the connector's own `mcp_connections[].permitted_tools` should mirror
+the same three tool names. Without both, the session has no callable tool
+for Drive search/download/upload — steps 1 and 2 silently degrade to "not
+found, proceed anyway" (indistinguishable from a legitimate first run or
+empty export) and step 6's upload has nothing to call at all. See Notes for
+the real incident this caused.
+
 ## 1. Download the candidate store
 
 Search Drive for `agentalloy-automation-candidates.db`. If found, download
@@ -108,3 +125,15 @@ persisted. A failed Discord POST is not that — see step 5.
   a different path entirely (e.g. bridging through the already-working
   GitHub Actions webhook delivery used by `pr-digest.yml`, which runs in
   a different, unrestricted network environment). Not yet decided.
+- **Separate real incident, discovered 2026-07-14, fixed same day**: the
+  live trigger's `mcp_connections` had a `Google-Drive` connector attached,
+  but `session_context.allowed_tools` never actually listed any Drive MCP
+  tool name — so, independent of and prior to the Discord issue above,
+  steps 1/2/6 had no callable tool on *every* run to date, and
+  `agentalloy-automation-candidates.db` had never once been created in
+  Drive. Every run was silently re-importing and re-evaluating from an
+  empty local store. Fixed by adding the three tool names to both
+  `allowed_tools` and `mcp_connections[].permitted_tools` (see Environment
+  requirements above) via a live `RemoteTrigger` config update on
+  2026-07-14. Confirm this held by checking Drive for
+  `agentalloy-automation-candidates.db` after the next scheduled run.
