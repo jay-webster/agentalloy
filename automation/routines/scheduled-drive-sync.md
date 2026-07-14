@@ -60,7 +60,7 @@ Then follow `automation/routines/evaluate-candidate.md` (unchanged,
 referenced here rather than duplicated) against `uv run python -m
 automation.cli ingest list --status new`.
 
-## 5. Report to Discord (best-effort — never blocks step 6)
+## 5. Relay the report to Discord via GitHub (best-effort — never blocks step 6)
 
 Run:
 
@@ -68,27 +68,33 @@ Run:
 uv run python -m automation.cli ingest report --since "$SINCE"
 ```
 
-POST its output to the Discord webhook URL configured for this routine
-(never committed to this repo — the real URL lives only in the live
-routine's own configuration):
+This environment's network egress policy blocks `discord.com` directly
+(confirmed `403`, see Notes), so the report is relayed through a GitHub
+Actions workflow (`discord-digest-relay.yml`, running on `ubuntu-latest`,
+which has unrestricted egress) instead of posted to Discord directly.
+Dispatch it with a `repository_dispatch` event, authenticated with
+`GH_DISPATCH_TOKEN` (routine-only config, provisioned by Jay — never
+committed to this repo and never typed or entered by Claude):
 
 ```
-jq -n --arg content "$(uv run python -m automation.cli ingest report --since "$SINCE")" '{content: $content}' \
-  | curl -X POST -H "Content-Type: application/json" -d @- "<DISCORD_WEBHOOK_URL>"
+jq -n --arg report "$(uv run python -m automation.cli ingest report --since "$SINCE")" '{event_type: "discord-digest", client_payload: {report: $report}}' \
+  | curl -sS -X POST \
+      -H "Authorization: Bearer $GH_DISPATCH_TOKEN" \
+      -H "Accept: application/vnd.github+json" \
+      -d @- "https://api.github.com/repos/jay-webster/agentalloy/dispatches"
 ```
 
 The `jq -n --arg` step correctly JSON-escapes the digest text (newlines,
 quotes) — don't hand-build the JSON payload string directly.
 
-**If this `curl` fails for any reason (including a `403` from the
-environment's own network egress policy blocking `discord.com` — a real,
-confirmed failure mode in this environment, not hypothetical), do not
-stop the routine and do not skip step 6.** Note the failure in the final
-report and continue. A notification delivery failure says nothing about
-whether the evaluation data itself is valid — gating persistence on it
-was a real bug (see Notes) that lost a full run's evaluations (486
-candidates) the first time this environment's egress policy actually
-blocked the request.
+**If this `curl` fails for any reason (including an auth or network
+failure — the same class of real, confirmed failure mode that used to
+hit `discord.com` directly, not hypothetical), do not stop the routine
+and do not skip step 6.** Note the failure in the final report and
+continue. A notification delivery failure says nothing about whether the
+evaluation data itself is valid — gating persistence on it was a real bug
+(see Notes) that lost a full run's evaluations (486 candidates) the first
+time this environment's egress policy actually blocked the request.
 
 ## 6. Upload the candidate store back to Drive
 
