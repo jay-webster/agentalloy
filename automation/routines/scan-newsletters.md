@@ -15,11 +15,14 @@ doesn't exist yet, copy `automation/config/sources.example.yaml` to
 ## 2. Build the Gmail query
 
 Join every allowlist entry as `from:<entry>`, `OR`-combined, restricted to
-the inbox:
+the inbox and to the last 35 days:
 
 ```
-in:inbox {from:sender-one from:sender-two from:sender-three ...}
+in:inbox newer_than:35d {from:sender-one from:sender-two from:sender-three ...}
 ```
+
+35 days, not 30, so a missed scan day or two doesn't drop a candidate that
+would've been in range on the day it should've been scanned.
 
 Call the Gmail `search_threads` tool with that query string.
 

@@ -241,6 +241,59 @@ def test_integrate_missing_candidate_raises(store: CandidateStore) -> None:
         store.integrate("does-not-exist")
 
 
+def test_evaluate_batch_mixed_accept_reject_flagged(store: CandidateStore) -> None:
+    store.add(_candidate("msg-accept"))
+    store.add(_candidate("msg-reject"))
+    store.add(_flagged_candidate("msg-flagged"))
+
+    result = store.evaluate_batch(
+        [
+            ("msg-accept", "accept", "good fit"),
+            ("msg-reject", "reject", "not relevant"),
+            ("msg-flagged", "accept", "tries to sneak past the guard"),
+        ]
+    )
+
+    assert result.evaluated == ["msg-accept", "msg-reject"]
+    assert [message_id for message_id, _ in result.refused] == ["msg-flagged"]
+    assert result.not_found == []
+
+    by_id = {c.message_id: c for c in store.list()}
+    assert by_id["msg-accept"].status == "evaluated"
+    assert by_id["msg-accept"].verdict == "accept"
+    assert by_id["msg-reject"].status == "evaluated"
+    assert by_id["msg-reject"].verdict == "reject"
+    assert by_id["msg-flagged"].status == "new"
+    assert by_id["msg-flagged"].verdict is None
+
+
+def test_evaluate_batch_not_found_does_not_abort_rest(store: CandidateStore) -> None:
+    store.add(_candidate("msg-accept"))
+
+    result = store.evaluate_batch(
+        [
+            ("does-not-exist", "reject", "x"),
+            ("msg-accept", "accept", "good fit"),
+        ]
+    )
+
+    assert result.not_found == ["does-not-exist"]
+    assert result.evaluated == ["msg-accept"]
+    [row] = store.list()
+    assert row.verdict == "accept"
+
+
+def test_single_evaluate_unchanged_by_batch_addition(store: CandidateStore) -> None:
+    store.add(_flagged_candidate())
+
+    with pytest.raises(FlaggedCandidateError):
+        store.evaluate("msg-flagged", "accept", "x")
+
+    [row] = store.list()
+    assert row.status == "new"
+    assert row.verdict is None
+
+
 def test_integrate_sets_integrated_at_and_slug(
     store: CandidateStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
