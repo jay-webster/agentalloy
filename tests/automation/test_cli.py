@@ -320,6 +320,65 @@ def test_import_jsonl_summary_counts_are_accurate(
     assert "1 skipped" in output
 
 
+def _evaluate_batch_line(**overrides: str) -> str:
+    import json
+
+    row = {
+        "message_id": "msg-batch-1",
+        "verdict": "accept",
+        "rationale": "good fit",
+    }
+    row.update(overrides)
+    return json.dumps(row)
+
+
+def test_evaluate_batch_malformed_line_is_skipped_not_fatal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli.main(
+        [
+            "ingest",
+            "add",
+            "--message-id",
+            "msg-batch-a",
+            "--thread-id",
+            "thread-batch-a",
+            "--source",
+            "sender@example.com",
+            "--subject",
+            "An AI thing",
+            "--received-at",
+            "2026-07-11T09:00:00Z",
+            "--snippet",
+            "Something interesting.",
+            "--ingested-at",
+            "2026-07-11T09:00:00Z",
+        ]
+    )
+    capsys.readouterr()
+
+    fixture = tmp_path / "verdicts.jsonl"
+    fixture.write_text(
+        "\n".join(
+            [
+                _evaluate_batch_line(message_id="msg-batch-a"),
+                "{not valid json",
+            ]
+        )
+    )
+
+    exit_code = cli.main(["ingest", "evaluate-batch", str(fixture)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "evaluated 1" in output
+    assert "skipped 1 malformed" in output
+    store = CandidateStore()
+    [row] = store.list()
+    store.close()
+    assert row.verdict == "accept"
+
+
 def _add_and_evaluate(message_id: str, verdict: str, rationale: str) -> None:
     cli.main(
         [

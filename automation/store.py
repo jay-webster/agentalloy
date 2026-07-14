@@ -77,6 +77,13 @@ class IntegrationResult:
     already_existed: bool
 
 
+@dataclass
+class BatchEvaluationResult:
+    evaluated: list[str]
+    refused: list[tuple[str, str]]
+    not_found: list[str]
+
+
 def _ensure_columns(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(candidates)")}
     for name, sql_type in _NEW_COLUMNS.items():
@@ -200,6 +207,20 @@ class CandidateStore:
         )
         self._conn.commit()
         return cursor.rowcount > 0
+
+    def evaluate_batch(self, rows: list[tuple[str, str, str]]) -> BatchEvaluationResult:
+        result = BatchEvaluationResult(evaluated=[], refused=[], not_found=[])
+        for message_id, verdict, rationale in rows:
+            try:
+                found = self.evaluate(message_id, verdict, rationale)
+            except FlaggedCandidateError as exc:
+                result.refused.append((message_id, exc.flag_reasons))
+                continue
+            if found:
+                result.evaluated.append(message_id)
+            else:
+                result.not_found.append(message_id)
+        return result
 
     def integrate(self, message_id: str) -> IntegrationResult:
         row = self._conn.execute(

@@ -25,6 +25,8 @@ _IMPORT_REQUIRED_FIELDS = (
     "snippet",
 )
 
+_EVALUATE_BATCH_REQUIRED_FIELDS = ("message_id", "verdict", "rationale")
+
 
 def _cmd_add(args: argparse.Namespace, store: CandidateStore) -> int:
     candidate = Candidate(
@@ -143,6 +145,38 @@ def _cmd_import_jsonl(args: argparse.Namespace, store: CandidateStore) -> int:
     return 0
 
 
+def _cmd_evaluate_batch(args: argparse.Namespace, store: CandidateStore) -> int:
+    rows: list[tuple[str, str, str]] = []
+    skipped = 0
+    with open(args.path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                skipped += 1
+                continue
+            if not isinstance(row, dict) or not all(
+                field in row for field in _EVALUATE_BATCH_REQUIRED_FIELDS
+            ):
+                skipped += 1
+                continue
+            rows.append((row["message_id"], row["verdict"], row["rationale"]))
+
+    result = store.evaluate_batch(rows)
+    print(
+        f"evaluated {len(result.evaluated)}, refused {len(result.refused)}, "
+        f"not found {len(result.not_found)}, skipped {skipped} malformed line(s)"
+    )
+    for message_id, flag_reasons in result.refused:
+        print(f"  refused: {message_id} is flagged ({flag_reasons})", file=sys.stderr)
+    for message_id in result.not_found:
+        print(f"  not found: {message_id}", file=sys.stderr)
+    return 0
+
+
 def _format_candidate(c: Candidate) -> str:
     return f"- {c.message_id} | {c.source} | {c.subject}\n  {c.rationale}"
 
@@ -227,6 +261,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_parser.add_argument("path")
     import_parser.set_defaults(func=_cmd_import_jsonl)
+
+    evaluate_batch_parser = ingest_sub.add_parser(
+        "evaluate-batch", help="Record verdicts for many candidates from a JSONL file"
+    )
+    evaluate_batch_parser.add_argument("path")
+    evaluate_batch_parser.set_defaults(func=_cmd_evaluate_batch)
 
     report_parser = ingest_sub.add_parser("report", help="Digest of recently evaluated candidates")
     report_parser.add_argument("--since", required=True)
