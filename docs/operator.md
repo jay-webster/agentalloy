@@ -374,7 +374,7 @@ mistake, since only one model will actually be loaded correctly:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `AUTHORING_MODEL` | Author/revise model (drafts and rewrites skill YAML) | `qwen3-14b-instruct` |
-| `AUTHORING_CRITIC_MODEL` | QA/critic model (reviews drafts against the R1-R8 contract) | `qwen3.6-27b` |
+| `AUTHORING_CRITIC_MODEL` | QA/critic model (reviews drafts against the R1-R8 contract) | `gemma-4-26b-a4b-it-mlx` |
 | `AUTHORING_LM_BASE_URL` | LM server URL for the author/revise model | `http://localhost:11435` |
 | `AUTHORING_LM_STUDIO_BASE_URL` | LM Studio URL for the critic model | `http://localhost:11434` |
 
@@ -388,9 +388,15 @@ model isn't loaded.
 CPU-only guidance not yet written):
 
 Load one of these into LM Studio for the critic model
-(`AUTHORING_CRITIC_MODEL=qwen3.6-27b`):
+(`AUTHORING_CRITIC_MODEL=gemma-4-26b-a4b-it-mlx`):
 
-- **GGUF, 4-bit (~18GB, recommended default)**:
+- **MLX, 4-bit (26B total / ~4B active MoE, recommended default)**:
+  [lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit](https://huggingface.co/lmstudio-community/gemma-4-26B-A4B-it-MLX-4bit)
+  — Apple's own inference stack. Closest memory footprint to the retired
+  qwen3.6-27b default; see the
+  [Gemma 4 critic trial write-up](qa/gemma-4-critic-model-trial.md) for the
+  comparison evidence.
+- **GGUF, 4-bit (~18GB)**:
   [unsloth/Qwen3.6-27B-GGUF](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF)
   — via llama.cpp with Metal acceleration.
 - **MLX, 4-bit (26.2GB)**:
@@ -398,6 +404,14 @@ Load one of these into LM Studio for the critic model
   — Apple's own inference stack.
 - **MLX, 8-bit (34.7GB, higher accuracy, less headroom)**:
   [unsloth/Qwen3.6-27B-MLX-8bit](https://huggingface.co/unsloth/Qwen3.6-27B-MLX-8bit)
+
+The qwen3.6-27b builds above are known to fail the critic step on this LM
+Studio server: `response_format: json_schema` (the request `run_critic`
+always sends) returns empty content on every case, on both the GGUF and MLX
+quants — root-caused in the
+[Gemma 4 critic trial write-up](qa/gemma-4-critic-model-trial.md). Left
+here for reference in case a future LM Studio version restores
+`json_schema` support, but don't expect them to work as the critic today.
 
 Leave headroom beyond the model file size for macOS and LM Studio itself
 — don't size the model to the last few GB of unified memory.
