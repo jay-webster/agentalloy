@@ -74,6 +74,31 @@ One question away, because the injected guidance taught the agent to ask:
 
 ---
 
+## Contents
+
+- [Getting started](#getting-started)
+- [Demo](#demo)
+- [What makes the composition different](#what-makes-the-composition-different)
+- [How it works: phases, contracts, signal layer](#how-it-works-phases-contracts-signal-layer)
+- [How to use it](#how-to-use-it)
+- [Container deployment](#container-deployment)
+- [Profiles](#profiles-user-scoped-skill-contexts)
+- [Harness support](#harness-support)
+- [Standalone CLI](#standalone-cli)
+- [REST API](#rest-api)
+- [MCP Server](#mcp-server)
+- [Packs shipping in-tree](#packs-shipping-in-tree)
+- [Architecture](#architecture)
+- [Telemetry](#telemetry)
+- [Configuration](#configuration)
+- [Development](#development)
+- [Need Help?](#need-help)
+- [Contributing](#contributing)
+- [Benchmarks](#benchmarks)
+- [License](#license)
+
+---
+
 ## Getting started
 
 Two doors — pick the one that's you:
@@ -119,6 +144,9 @@ $ curl -s -X POST http://localhost:47950/compose \
   "output": "## TDD: write the failing test first\n\nIn pytest, ...",
   "source_skills": ["test-driven-development", "pytest-fixtures"],
   "system_skills_applied": true,
+  "assembly_tier": 0,
+  "recommended_max_tokens": 2048,
+  "dense_leg_degraded": false,
   "latency_ms": { "retrieval_ms": 31, "assembly_ms": 16, "total_ms": 47 }
 }
 ```
