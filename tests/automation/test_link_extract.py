@@ -3,8 +3,7 @@ from automation.link_extract import extract_links
 
 def test_multiple_distinct_links_extracted_in_order() -> None:
     body = (
-        "Check out https://example.com/a and also "
-        "https://example.com/b plus https://example.com/c"
+        "Check out https://example.com/a and also https://example.com/b plus https://example.com/c"
     )
 
     links, skipped = extract_links(body)

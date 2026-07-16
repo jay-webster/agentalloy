@@ -151,9 +151,7 @@ class CandidateStore:
         return cursor.rowcount > 0
 
     def get_state(self, key: str) -> str | None:
-        row = self._conn.execute(
-            "SELECT value FROM ingest_state WHERE key = ?", (key,)
-        ).fetchone()
+        row = self._conn.execute("SELECT value FROM ingest_state WHERE key = ?", (key,)).fetchone()
         return row[0] if row else None
 
     def set_state(self, key: str, value: str) -> None:
@@ -189,7 +187,7 @@ class CandidateStore:
             subject=subject,
             received_at=received_at,
             snippet=f"URL: {url}",
-            ingested_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            ingested_at=datetime.datetime.now(datetime.UTC).isoformat(),
         )
         self.add(candidate)
         return message_id, True
