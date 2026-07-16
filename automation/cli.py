@@ -309,9 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument("--since", required=True)
     report_parser.set_defaults(func=_cmd_report)
 
-    add_url_parser = ingest_sub.add_parser(
-        "add-url", help="Record a candidate from a bare URL"
-    )
+    add_url_parser = ingest_sub.add_parser("add-url", help="Record a candidate from a bare URL")
     add_url_parser.add_argument("--url", required=True)
     add_url_parser.add_argument("--subject", required=True)
     add_url_parser.add_argument("--received-at", required=True)
