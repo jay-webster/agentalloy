@@ -1,0 +1,39 @@
+name: PR Approved
+
+# Posts a Discord notification the moment a PR is approved, complementing
+# pr-digest.yml's daily rollup with immediate feedback -- same shared
+# posting helpers (automation/ci/discord.py) as digest-relay and pr-digest.
+#
+# DISCORD_WEBHOOK_URL is a repository secret, never referenced as a
+# literal value anywhere in this file or logged -- GitHub redacts secret
+# values from workflow logs automatically.
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    if: github.event.review.state == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Post approval notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          export PR_JSON=$(jq -c '{number: .pull_request.number, title: .pull_request.title, url: .pull_request.html_url}' "$GITHUB_EVENT_PATH")
+          export REVIEW_JSON=$(jq -c '.review' "$GITHUB_EVENT_PATH")
+          uv run python -m automation.ci.pr_approved
