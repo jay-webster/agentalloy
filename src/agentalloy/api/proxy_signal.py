@@ -909,7 +909,9 @@ def _boundary_confirm_directives(
         return []
 
     ship_landed = phase == "ship" and any((cwd / "docs" / "ship").glob("*.md"))
-    swept = bool(phase_changed and session_key and transitioned_by and transitioned_by != session_key)
+    swept = bool(
+        phase_changed and session_key and transitioned_by and transitioned_by != session_key
+    )
 
     if new_session:
         if ship_landed:

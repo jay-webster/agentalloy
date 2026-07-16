@@ -306,7 +306,9 @@ class TestTransitionedBy:
         content = (repo_root / ".agentalloy" / "phase").read_text()
         assert "transitioned_by: session-a" in content
 
-    def test_no_session_key_records_nothing(self, repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_session_key_records_nothing(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # A bare terminal invocation (no CLAUDE_CODE_SESSION_ID) is ambiguous, not
         # attributable — nothing is recorded rather than a misleading guess.
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
