@@ -15,7 +15,7 @@ import sys
 # Kept (unused directly) so pr_digest.urllib.request stays patchable -- matches
 # test_pr_digest.py's existing monkeypatch target, which is left unedited per
 # this task's regression check.
-import urllib.request  # noqa: F401
+import urllib.request  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from typing import Any
 
 from automation.ci.discord import DISCORD_MESSAGE_LIMIT, chunk_message, post_to_discord
