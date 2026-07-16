@@ -289,3 +289,69 @@ class TestApprovalGate:
         assert result["blocked"] is True
         assert result.get("reason") != "approval"
         assert any("docs/spec" in a for a in result["advisories"])
+
+
+class TestTransitionedBy:
+    """`transitioned_by` records which session caused a real phase transition —
+    lets a *different* session recognize "the phase changed and it wasn't me"
+    (see ``proxy_signal._boundary_confirm_directives``'s "swept" case, and
+    ``tests/test_swept_phase_confirm.py`` for the consuming side).
+    """
+
+    def test_recorded_on_a_real_transition(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-a")
+        run_phase_set("build", root=repo_root)
+        content = (repo_root / ".agentalloy" / "phase").read_text()
+        assert "transitioned_by: session-a" in content
+
+    def test_no_session_key_records_nothing(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A bare terminal invocation (no CLAUDE_CODE_SESSION_ID) is ambiguous, not
+        # attributable — nothing is recorded rather than a misleading guess.
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        run_phase_set("build", root=repo_root)
+        content = (repo_root / ".agentalloy" / "phase").read_text()
+        assert "transitioned_by" not in content
+
+    def test_preserved_across_idempotent_set_to_same_phase(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-a")
+        run_phase_set("build", root=repo_root)
+        # A different session re-running `phase set build` (a no-op, same phase)
+        # must not silently reattribute the transition to itself.
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-b")
+        run_phase_set("build", root=repo_root)
+        content = (repo_root / ".agentalloy" / "phase").read_text()
+        assert "transitioned_by: session-a" in content
+
+    def test_updated_on_a_new_real_transition(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-a")
+        run_phase_set("build", root=repo_root)
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-b")
+        # build -> design is backward (unguarded) — avoids the build->qa forward
+        # gate, which would otherwise refuse the write and mask this assertion.
+        run_phase_set("design", root=repo_root)
+        content = (repo_root / ".agentalloy" / "phase").read_text()
+        assert "transitioned_by: session-b" in content
+        assert "session-a" not in content
+
+    def test_blocked_transition_records_nothing(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A refused forward transition (gate not met) never reaches `_write_phase`
+        # at all — the lock file must stay exactly as the last successful write
+        # left it (including the actor recorded on that prior, real transition).
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-a")
+        run_phase_set("spec", root=repo_root)
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-b")
+        result = run_phase_set("design", root=repo_root)
+        assert result["blocked"] is True
+        content = (repo_root / ".agentalloy" / "phase").read_text()
+        assert "transitioned_by: session-a" in content
+        assert "session-b" not in content
