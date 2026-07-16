@@ -488,3 +488,95 @@ def test_report_flagged_mention_absent_when_zero(capsys: pytest.CaptureFixture[s
     output = capsys.readouterr().out
 
     assert "flagged" not in output
+
+
+def test_add_url_exits_zero_and_prints_added(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(
+        [
+            "ingest",
+            "add-url",
+            "--url",
+            "https://example.com/new-thing",
+            "--subject",
+            "cool find",
+            "--received-at",
+            "2026-07-16T00:00:00Z",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "added" in output
+
+
+def test_add_url_repeat_prints_already_present(capsys: pytest.CaptureFixture[str]) -> None:
+    args = [
+        "ingest",
+        "add-url",
+        "--url",
+        "https://example.com/repeat-thing",
+        "--subject",
+        "cool find",
+        "--received-at",
+        "2026-07-16T00:00:00Z",
+    ]
+
+    first_exit = cli.main(args)
+    capsys.readouterr()
+    second_exit = cli.main(args)
+    output = capsys.readouterr().out
+
+    assert first_exit == 0
+    assert second_exit == 0
+    assert "already present" in output
+
+
+def test_extract_links_cap_and_skipped_count(capsys: pytest.CaptureFixture[str]) -> None:
+    body = " ".join(f"https://example.com/{i}" for i in range(8))
+
+    exit_code = cli.main(["ingest", "extract-links", "--text", body, "--cap", "5"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    lines = output.strip().splitlines()
+    assert len(lines) == 6
+    assert lines[:5] == [f"https://example.com/{i}" for i in range(5)]
+    assert lines[5] == "skipped: 3"
+
+
+def test_extract_links_text_file_matches_text(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = "https://example.com/a https://example.com/b"
+    text_file = tmp_path / "message.txt"
+    text_file.write_text(body)
+
+    cli.main(["ingest", "extract-links", "--text", body])
+    from_text = capsys.readouterr().out
+
+    cli.main(["ingest", "extract-links", "--text-file", str(text_file)])
+    from_file = capsys.readouterr().out
+
+    assert from_text == from_file
+
+
+def test_discord_cursor_get_before_set_is_empty(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = cli.main(["ingest", "discord-cursor", "get"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert output == ""
+
+
+def test_discord_cursor_set_then_get_round_trips(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli.main(["ingest", "discord-cursor", "set", "--message-id", "999"])
+    capsys.readouterr()
+
+    cli.main(["ingest", "discord-cursor", "get"])
+    output = capsys.readouterr().out
+
+    assert output.strip() == "999"

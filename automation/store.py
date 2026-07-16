@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from automation import injection_guard, integrator
+from automation import injection_guard, integrator, url_ingest
 
 DEFAULT_DB_PATH = Path(".automation") / "candidates.db"
 
@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS candidates (
     snippet     TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'new',
     ingested_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ingest_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -115,7 +120,7 @@ class CandidateStore:
     def __init__(self, db_path: Path = DEFAULT_DB_PATH) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path)
-        self._conn.execute(_SCHEMA_DDL)
+        self._conn.executescript(_SCHEMA_DDL)
         self._conn.commit()
         _ensure_columns(self._conn)
 
@@ -144,6 +149,50 @@ class CandidateStore:
         )
         self._conn.commit()
         return cursor.rowcount > 0
+
+    def get_state(self, key: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT value FROM ingest_state WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_state(self, key: str, value: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO ingest_state (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value),
+        )
+        self._conn.commit()
+
+    def find_by_url(self, url: str) -> str | None:
+        prefix = f"URL: {url}"
+        rows = self._conn.execute("SELECT message_id, snippet FROM candidates").fetchall()
+        for message_id, snippet in rows:
+            if snippet == prefix or snippet.startswith(prefix + "\n"):
+                return message_id
+        return None
+
+    def add_url(
+        self, url: str, subject: str, received_at: str, source: str = "discord"
+    ) -> tuple[str, bool]:
+        existing = self.find_by_url(url)
+        if existing is not None:
+            return existing, False
+
+        message_id = url_ingest.candidate_id_for_url(url)
+        candidate = Candidate(
+            message_id=message_id,
+            thread_id=message_id,
+            source=source,
+            subject=subject,
+            received_at=received_at,
+            snippet=f"URL: {url}",
+            ingested_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+        self.add(candidate)
+        return message_id, True
 
     def list(self, status: str | None = None) -> list[Candidate]:
         columns = (

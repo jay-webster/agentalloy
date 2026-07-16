@@ -7,6 +7,7 @@ import datetime
 import json
 import sys
 
+from automation import link_extract
 from automation.store import (
     VALID_VERDICTS,
     Candidate,
@@ -104,6 +105,42 @@ def _cmd_integrate(args: argparse.Namespace, store: CandidateStore) -> int:
         print(f"already integrated, draft unchanged: {result.draft_path}")
     else:
         print(f"integrated {args.message_id}: draft written to {result.draft_path}")
+    return 0
+
+
+def _cmd_add_url(args: argparse.Namespace, store: CandidateStore) -> int:
+    message_id, inserted = store.add_url(
+        args.url, args.subject, args.received_at, source=args.source
+    )
+    if inserted:
+        print(f"added: {message_id}")
+    else:
+        print(f"already present: {message_id}")
+    return 0
+
+
+def _cmd_extract_links(args: argparse.Namespace, store: CandidateStore) -> int:
+    if args.text_file:
+        with open(args.text_file, encoding="utf-8") as f:
+            text = f.read()
+    else:
+        text = args.text
+    links, skipped = link_extract.extract_links(text, cap=args.cap)
+    for url in links:
+        print(url)
+    print(f"skipped: {skipped}")
+    return 0
+
+
+def _cmd_discord_cursor_get(args: argparse.Namespace, store: CandidateStore) -> int:
+    value = store.get_state("discord_last_message_id")
+    if value is not None:
+        print(value)
+    return 0
+
+
+def _cmd_discord_cursor_set(args: argparse.Namespace, store: CandidateStore) -> int:
+    store.set_state("discord_last_message_id", args.message_id)
     return 0
 
 
@@ -271,6 +308,38 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser = ingest_sub.add_parser("report", help="Digest of recently evaluated candidates")
     report_parser.add_argument("--since", required=True)
     report_parser.set_defaults(func=_cmd_report)
+
+    add_url_parser = ingest_sub.add_parser(
+        "add-url", help="Record a candidate from a bare URL"
+    )
+    add_url_parser.add_argument("--url", required=True)
+    add_url_parser.add_argument("--subject", required=True)
+    add_url_parser.add_argument("--received-at", required=True)
+    add_url_parser.add_argument("--source", default="discord")
+    add_url_parser.set_defaults(func=_cmd_add_url)
+
+    extract_links_parser = ingest_sub.add_parser(
+        "extract-links", help="Extract candidate links from text"
+    )
+    extract_links_group = extract_links_parser.add_mutually_exclusive_group(required=True)
+    extract_links_group.add_argument("--text", default=None)
+    extract_links_group.add_argument("--text-file", default=None)
+    extract_links_parser.add_argument("--cap", type=int, default=5)
+    extract_links_parser.set_defaults(func=_cmd_extract_links)
+
+    discord_cursor_parser = ingest_sub.add_parser(
+        "discord-cursor", help="Get or set the Discord ingestion cursor"
+    )
+    discord_cursor_sub = discord_cursor_parser.add_subparsers(
+        dest="discord_cursor_command", required=True
+    )
+
+    discord_cursor_get_parser = discord_cursor_sub.add_parser("get", help="Print the cursor")
+    discord_cursor_get_parser.set_defaults(func=_cmd_discord_cursor_get)
+
+    discord_cursor_set_parser = discord_cursor_sub.add_parser("set", help="Set the cursor")
+    discord_cursor_set_parser.add_argument("--message-id", required=True)
+    discord_cursor_set_parser.set_defaults(func=_cmd_discord_cursor_set)
 
     return parser
 
