@@ -1,0 +1,40 @@
+skill_id: sys-trace-wiring
+canonical_name: "System — Verify the Wiring, Not Just the Unit"
+description: "After building a feature, trace it from the application's real entry point through to render and confirm the data actually flows; green unit tests prove the unit works in isolation, never that the running app uses it."
+category: quality
+skill_class: system
+domain_tags: []
+always_apply: false
+phase_scope:
+  - build
+  - qa
+  - ship
+category_scope: null
+author: operator
+change_summary: "initial authoring — integration discipline from tuning.md §3; targets the built-but-unwired feature (Calendar tested, App.jsx never passed events)"
+raw_prose: |
+  # Verify the wiring, not just the unit
+
+  After building a feature, trace it from the application's real entry point
+  (App → component → render) and confirm the data actually flows end to end.
+  Green unit tests prove the unit works in isolation; they do NOT prove the
+  running app uses it. A built-but-unwired feature scores as incomplete, not
+  partial credit — "in scope" means wired and working, not merely present in a
+  file. Running it and reading the top-level render catches integration gaps
+  that unit tests structurally cannot.
+
+  Wrong — the feature is built and tested in the component, but the entry point
+  never feeds it, so the indicators never show in the running app:
+  ```jsx
+  // App.jsx
+  <Calendar />          // events prop missing
+  ```
+
+  Right — the prop is passed and the source is actually populated:
+  ```jsx
+  <Calendar events={events} />   // and confirm `events` is non-empty at runtime
+  ```
+
+  Verification: end every multi-file change with a data-flow trace — name the
+  prop or state, follow it from source to render, and confirm no link in the
+  chain is empty.

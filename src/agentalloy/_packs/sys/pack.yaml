@@ -1,5 +1,5 @@
 name: sys
-version: 1.1.0
+version: 1.2.0
 tier: foundation
 description: |
   Golden system-capability skills — the org customization surface for the SDD
@@ -31,4 +31,13 @@ skills:
   fragment_count: 0
 - skill_id: sys-code-index
   file: sys-code-index.yaml
+  fragment_count: 0
+- skill_id: sys-derive-dont-duplicate
+  file: sys-derive-dont-duplicate.yaml
+  fragment_count: 0
+- skill_id: sys-test-behavior
+  file: sys-test-behavior.yaml
+  fragment_count: 0
+- skill_id: sys-trace-wiring
+  file: sys-trace-wiring.yaml
   fragment_count: 0

@@ -1,0 +1,42 @@
+skill_id: sys-derive-dont-duplicate
+canonical_name: "System — Derive, Don't Duplicate (Single Source of Truth)"
+description: "Any fact needed in two places — a week-start day, a column count, a max-items limit — is defined once as a named constant and derived everywhere else, so the two copies cannot drift and silently disagree."
+category: quality
+skill_class: system
+domain_tags: []
+always_apply: false
+phase_scope:
+  - build
+  - qa
+  - ship
+category_scope: null
+author: operator
+change_summary: "initial authoring — correctness discipline from tuning.md §1 (SSOT); targets the every-month grid-misalignment class of bug"
+raw_prose: |
+  # Derive, don't duplicate (single source of truth)
+
+  If the same fact (a week-start day, a column count, a max-items limit, an
+  indexing base) is needed in more than one place, define it ONCE as a named
+  constant and derive every use from it. Never hardcode the fact in one place
+  and re-derive it by hand in another — the two copies drift and silently
+  disagree. The same trap appears when one part of the code *describes* a
+  convention (a header, a label) and another part *implements* it (the math):
+  both must reference the same constant.
+
+  Wrong — the header says Monday-first but the math assumes Sunday-first, so
+  every month shifts:
+  ```js
+  const WEEKDAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  for (let i = firstDay.getDay() - 1; i >= 0; i--) { /* leading blanks */ }
+  ```
+
+  Right — one constant, the offset is derived and cannot drift:
+  ```js
+  const WEEK_START = 1; // Monday — single source of truth
+  const WEEKDAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const leadingBlanks = (firstOfMonth.getDay() - WEEK_START + 7) % 7;
+  ```
+
+  Verification: grep the diff for any literal (`'Mon'`, `7`, `3`, `0`) that
+  appears in two spots — if one describes a convention and another implements
+  it, they must reference the same named constant.

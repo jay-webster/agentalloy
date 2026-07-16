@@ -1,0 +1,44 @@
+skill_id: sys-test-behavior
+canonical_name: "System — Tests Must Assert Behavior a Bug Would Break"
+description: "Every test pins known inputs and asserts the exact semantic result, so a real defect makes it fail; existence and count assertions manufacture false confidence and let visible bugs ship green."
+category: quality
+skill_class: system
+domain_tags: []
+always_apply: false
+phase_scope:
+  - build
+  - qa
+  - ship
+category_scope: null
+author: operator
+change_summary: "initial authoring — testing discipline from tuning.md §2; targets high test volume / low test power (60 green tests, visibly broken output)"
+raw_prose: |
+  # Tests must assert behavior a bug would break
+
+  For every test ask: "What specific wrong output would make this fail?" If the
+  answer is "nothing — it just checks something exists or counts elements," the
+  test is not pulling its weight. Existence and count assertions pass on broken
+  code and manufacture false confidence. Pin known inputs (fixed dates, fixed
+  data, fixed props) and assert the exact semantic result. More assertions on
+  one pinned input beats more test cases on unpinned inputs.
+
+  Weak — green even when the grid is misaligned:
+  ```js
+  it('renders day 1', () => {
+    render(<Calendar month={5} year={2025} />);
+    expect(screen.getByText('1')).toBeInTheDocument();
+  });
+  ```
+
+  Strong — pins the date and asserts the exact column, so the bug fails it:
+  ```js
+  it('June 1 2025 (Sunday) sits in the Sun column', () => {
+    render(<Calendar month={5} year={2025} />);
+    const cells = screen.getAllByRole('gridcell');
+    const first = cells.findIndex(c => c.textContent === '1');
+    expect(first % 7).toBe(6);
+  });
+  ```
+
+  Verification: for each new test, name the one defect it would catch; if you
+  cannot, it is an existence assertion — strengthen it or drop it.
