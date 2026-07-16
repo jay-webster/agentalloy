@@ -141,7 +141,12 @@ def _current_tool_python() -> Path | None:
         return None
     if out.returncode != 0 or not out.stdout.strip():
         return None
-    python = Path(out.stdout.strip()) / "agentalloy" / "bin" / "python"
+    tool_root = Path(out.stdout.strip()) / "agentalloy"
+    python = (
+        tool_root / "Scripts" / "python.exe"
+        if sys.platform.startswith("win")
+        else tool_root / "bin" / "python"
+    )
     return python if python.exists() else None
 
 
