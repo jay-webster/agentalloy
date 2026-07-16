@@ -118,6 +118,48 @@ def _advisory(messages: list[str], qwen: int = 1) -> MagicMock:
     return d
 
 
+class TestExtractTaskFromMessages:
+    """Chat-completions resends full history every call — the task prompt
+    must track the latest user turn, not the session's opening line."""
+
+    def test_uses_latest_user_message_not_first(self) -> None:
+        req = ProxyRequest(
+            model="gpt-4",
+            messages=[
+                ProxyMessage(role="user", content="hi"),
+                ProxyMessage(role="assistant", content="hello, how can I help?"),
+                ProxyMessage(role="user", content="please build the login form"),
+            ],
+        )
+
+        assert proxy_signal._extract_task_from_messages(req) == "please build the login form"
+
+    def test_flattens_content_blocks_from_latest_message(self) -> None:
+        req = ProxyRequest(
+            model="gpt-4",
+            messages=[
+                ProxyMessage(role="user", content="hi"),
+                ProxyMessage(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": "please "},
+                        {"type": "text", "text": "build the login form"},
+                    ],
+                ),
+            ],
+        )
+
+        assert proxy_signal._extract_task_from_messages(req) == "please build the login form"
+
+    def test_no_user_messages_returns_none(self) -> None:
+        req = ProxyRequest(
+            model="gpt-4",
+            messages=[ProxyMessage(role="assistant", content="hello")],
+        )
+
+        assert proxy_signal._extract_task_from_messages(req) is None
+
+
 class TestEvaluateSignal:
     def test_no_phase_file_returns_passthrough(self, tmp_path: Path) -> None:
         result = asyncio.run(evaluate_signal(_req("hello"), tmp_path))
