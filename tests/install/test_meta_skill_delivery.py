@@ -1,12 +1,11 @@
 """Meta-skill corpus delivery — proves the real sdd pack, imported through the real
-production path, actually surfaces all 7 converted meta/conventions skills via the
-real system-skill retrieval predicate.
+production path, actually surfaces all 8 phase-scoped system skills via the real
+system-skill retrieval predicate: the 7 converted meta/conventions skills plus
+`sys-skill-review-verdict` (authored directly in the pack, with no standalone
+source .md — see its exclusion from the raw-prose-carryover check below).
 
 No fixture corpus, no mocks: the real `_packs/sdd` directory, the real
 `install.importer.import_packs`, the real `retrieval.system.retrieve_system_fragments`.
-
-Excludes `sys-skill-review-verdict`: that skill teaches producing the Gate 1.5
-semantic-review verdict artifact, a gate mechanism this fork doesn't have.
 """
 
 from __future__ import annotations
@@ -32,7 +31,10 @@ _SOURCE_DIRS = {
     "sys-skill-output-formatting": "conventions",
     "sys-skill-writing-voice": "conventions",
 }
-_TARGET_IDS = set(_SOURCE_DIRS)
+# sys-skill-review-verdict has no standalone source .md (raw_prose authored
+# directly in the pack YAML), so it's covered everywhere except the
+# raw-prose-carryover check, which diffs against a source file that doesn't exist.
+_TARGET_IDS = set(_SOURCE_DIRS) | {"sys-skill-review-verdict"}
 
 
 def _fresh_store(tmp_path: Path):
