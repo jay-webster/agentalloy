@@ -191,15 +191,32 @@ def _swap_command(method: str, ref: str, extras: list[str] | None = None) -> lis
     pip only when ``uv`` truly isn't available.
 
     ``extras`` (from :func:`_detect_installed_extras`, probed before the swap)
-    are appended as ``agentalloy[extra1,extra2]`` so a prior install's
-    code-index/rerank dependencies survive the reinstall instead of silently
-    disappearing. No-extras behavior is byte-for-byte unchanged from before
-    extras support existed.
+    are folded into the ``--from`` spec as ``agentalloy[extra1,extra2] @ git+...``
+    so a prior install's code-index/rerank dependencies survive the reinstall
+    instead of silently disappearing. For a pre-existing ``uv-tool`` install,
+    ``--python`` is also passed so uv resolves against that tool's own
+    interpreter rather than the system default. No-extras behavior is
+    byte-for-byte unchanged from before extras support existed.
     """
     target = f"git+{_GIT_URL}@{ref}"
     package = f"agentalloy[{','.join(sorted(extras))}]" if extras else "agentalloy"
     if method != "source" and shutil.which("uv"):
-        return ["uv", "tool", "install", "--force", "--from", target, package]
+        # Extras must ride on the ``--from`` spec (PEP 508 direct reference),
+        # NOT the trailing package arg: ``uv tool install --from <bare-git-url>
+        # agentalloy[extra]`` errors with "requirement provided with --from
+        # conflicts with install request" because the ``--from`` source carries
+        # no extras. The trailing arg stays the bare package name.
+        from_spec = f"{package} @ {target}" if extras else target
+        cmd = ["uv", "tool", "install", "--force", "--from", from_spec]
+        if method == "uv-tool":
+            # Resolve against the tool's own interpreter (satisfies agentalloy's
+            # Python version constraint) rather than the system default, which
+            # may be older than what the target release requires.
+            py = _current_tool_python()
+            if py is not None and py.exists():
+                cmd.extend(["--python", str(py)])
+        cmd.append("agentalloy")
+        return cmd
     if extras:
         # PEP 508 direct-URL-with-extras syntax; the plain bare-URL form (no
         # package name) can't carry extras.
