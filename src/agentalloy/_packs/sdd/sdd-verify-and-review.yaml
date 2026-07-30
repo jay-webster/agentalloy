@@ -90,7 +90,7 @@ raw_prose: |
 
   ## 1. Run the full bar
 
-  Read your work-item contract first (`.agentalloy/contracts/qa/<slug>.md`, which
+  Read your work-item contract first (`.agentalloy/contracts/active/qa/<slug>.md`, which
   build authored — the proxy front-loaded the verification skills for it on
   entry). Then run everything — the **CI** system skill names the exact commands
   — and record the real results, not "should pass":

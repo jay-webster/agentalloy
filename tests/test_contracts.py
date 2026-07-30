@@ -179,9 +179,9 @@ def test_list_contracts_for_phase_mtime_order(tmp_path: Path):
 
     from agentalloy.contracts import list_contracts_for_phase
 
-    _write_contract(tmp_path / ".agentalloy" / "contracts" / "build" / "old.md")
+    _write_contract(tmp_path / ".agentalloy" / "contracts" / "active" / "build" / "old.md")
     time.sleep(0.01)
-    _write_contract(tmp_path / ".agentalloy" / "contracts" / "build" / "new.md")
+    _write_contract(tmp_path / ".agentalloy" / "contracts" / "active" / "build" / "new.md")
 
     files = list_contracts_for_phase(tmp_path, "build")
     assert len(files) == 2
@@ -200,9 +200,9 @@ def test_latest_contract_no_phase_filter(tmp_path: Path):
 
     from agentalloy.contracts import latest_contract
 
-    _write_contract(tmp_path / ".agentalloy" / "contracts" / "build" / "build.md")
+    _write_contract(tmp_path / ".agentalloy" / "contracts" / "active" / "build" / "build.md")
     time.sleep(0.01)
-    _write_contract(tmp_path / ".agentalloy" / "contracts" / "spec" / "spec.md")
+    _write_contract(tmp_path / ".agentalloy" / "contracts" / "active" / "spec" / "spec.md")
 
     latest = latest_contract(tmp_path)
     assert latest is not None
@@ -305,7 +305,7 @@ class TestIntakeRouteHint:
 
     def _write_intake(self, tmp_path: Path, route: str) -> None:
         _write_contract(
-            tmp_path / ".agentalloy" / "contracts" / "intake" / "t.md",
+            tmp_path / ".agentalloy" / "contracts" / "active" / "intake" / "t.md",
             phase="intake",
             extra_fields={"route": route},
         )
@@ -338,7 +338,7 @@ class TestIntakeRouteHint:
 
         self._write_intake(tmp_path, "full")
         _write_contract(
-            tmp_path / ".agentalloy" / "contracts" / "sdd-fast" / "stray.md",
+            tmp_path / ".agentalloy" / "contracts" / "active" / "sdd-fast" / "stray.md",
             phase="sdd-fast",
             extra_fields={"route": "fast"},
         )
@@ -350,7 +350,7 @@ class TestIntakeRouteHint:
         from agentalloy.signals.skill_loader import _intake_route_hint
 
         _write_contract(
-            tmp_path / ".agentalloy" / "contracts" / "sdd-fast" / "t.md",
+            tmp_path / ".agentalloy" / "contracts" / "active" / "sdd-fast" / "t.md",
             phase="sdd-fast",
             extra_fields={"route": "fast"},
         )
@@ -361,7 +361,7 @@ class TestIntakeRouteHint:
         presence (here: none) → full lane."""
         from agentalloy.signals.skill_loader import _intake_route_hint
 
-        bad = tmp_path / ".agentalloy" / "contracts" / "intake" / "bad.md"
+        bad = tmp_path / ".agentalloy" / "contracts" / "active" / "intake" / "bad.md"
         bad.parent.mkdir(parents=True, exist_ok=True)
         bad.write_text("no frontmatter here\n", encoding="utf-8")
         assert _intake_route_hint(tmp_path) is None
