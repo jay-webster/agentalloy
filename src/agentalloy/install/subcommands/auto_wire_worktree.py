@@ -141,6 +141,7 @@ def _try_auto_wire(cwd: Path) -> None:
             upstream_model=upstream_model,
             key_env=key_env,
             lifecycle_mode=lifecycle_mode,
+            assume_index=True,
         )
         print(f"[AgentAlloy] auto-wired {harness} for this worktree (from {main_root})")
 
