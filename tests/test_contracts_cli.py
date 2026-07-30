@@ -43,7 +43,9 @@ class TestMigrateCommand:
         assert rc == 0
         out = json.loads(capsys.readouterr().out)
         assert out["dry_run"] is True
-        assert out["moves"] == [{"from": "build/01-legacy.md", "to": "active/build/01-legacy.md", "archived": False}]
+        assert out["moves"] == [
+            {"from": "build/01-legacy.md", "to": "active/build/01-legacy.md", "archived": False}
+        ]
         # nothing actually moved
         assert (tmp_path / ".agentalloy" / "contracts" / "build" / "01-legacy.md").exists()
 
@@ -56,7 +58,9 @@ class TestMigrateCommand:
         out = json.loads(capsys.readouterr().out)
         assert out["migrated"] == 1
         assert not (tmp_path / ".agentalloy" / "contracts" / "build" / "01-legacy.md").exists()
-        assert (tmp_path / ".agentalloy" / "contracts" / "active" / "build" / "01-legacy.md").exists()
+        assert (
+            tmp_path / ".agentalloy" / "contracts" / "active" / "build" / "01-legacy.md"
+        ).exists()
 
     def test_migrate_rewrites_cursor_to_follow_move(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
@@ -65,7 +69,9 @@ class TestMigrateCommand:
         args = _parse("migrate", "--json")
         args.func(args)
         capsys.readouterr()
-        assert (tmp_path / ".agentalloy" / "cursor").read_text().strip() == "active/build/01-legacy.md"
+        assert (
+            tmp_path / ".agentalloy" / "cursor"
+        ).read_text().strip() == "active/build/01-legacy.md"
 
     def test_migrate_human_render_no_op_when_already_tree(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
