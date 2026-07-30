@@ -111,7 +111,10 @@ def _forward_gate_blocks(current: str, target: str, root: Path) -> tuple[bool, l
         evaluate_node,
     )
     from agentalloy.signals.predicates import PredicateContext, PredicateResult  # noqa: PLC0415
-    from agentalloy.signals.skill_loader import ensure_migrated, exit_gates_for_phase  # noqa: PLC0415
+    from agentalloy.signals.skill_loader import (  # noqa: PLC0415
+        ensure_migrated,
+        exit_gates_for_phase,
+    )
 
     if target != _PHASE_GRAPH.get(current):
         return False, []  # backward / bail / non-linear → unguarded
