@@ -114,6 +114,7 @@ class TestTryAutoWire:
                 upstream_model="test-model",
                 key_env="MY_KEY",
                 lifecycle_mode="full",
+                assume_index=True,
             )
 
     def test_wires_every_harness_recorded_for_the_main_repo(

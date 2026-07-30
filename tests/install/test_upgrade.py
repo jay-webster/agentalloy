@@ -61,7 +61,10 @@ def test_target_image_preserves_full_variant():
 
 
 def test_swap_command_prefers_uv_when_on_path():
-    with patch.object(up.shutil, "which", return_value="/usr/bin/uv"):
+    with (
+        patch.object(up.shutil, "which", return_value="/usr/bin/uv"),
+        patch.object(up, "_current_tool_python", return_value=None),
+    ):
         assert up._swap_command("pip", "v2.3.0") == [
             "uv",
             "tool",
@@ -95,7 +98,10 @@ def test_swap_command_falls_back_to_pip_without_uv():
 
 
 def test_swap_command_never_uses_uv_for_source():
-    with patch.object(up.shutil, "which", return_value="/usr/bin/uv"):
+    with (
+        patch.object(up.shutil, "which", return_value="/usr/bin/uv"),
+        patch.object(up, "_current_tool_python", return_value=None),
+    ):
         assert up._swap_command("source", "v2.3.0") == [
             up.sys.executable,
             "-m",
@@ -115,28 +121,70 @@ def test_swap_command_never_uses_uv_for_source():
 
 
 def test_swap_command_appends_extras_for_uv_tool():
-    with patch.object(up.shutil, "which", return_value="/usr/bin/uv"):
+    # Regression: extras must ride on the `--from` spec, not the trailing
+    # package arg — `uv tool install --from <bare-url> agentalloy[extra]`
+    # errors with "requirement provided with --from conflicts with install
+    # request" because the `--from` source itself carries no extras.
+    with (
+        patch.object(up.shutil, "which", return_value="/usr/bin/uv"),
+        patch.object(up, "_current_tool_python", return_value=None),
+    ):
         assert up._swap_command("uv-tool", "v2.3.0", ["code-index"]) == [
             "uv",
             "tool",
             "install",
             "--force",
             "--from",
-            f"git+{up._GIT_URL}@v2.3.0",
-            "agentalloy[code-index]",
+            f"agentalloy[code-index] @ git+{up._GIT_URL}@v2.3.0",
+            "agentalloy",
         ]
 
 
 def test_swap_command_sorts_and_joins_multiple_extras():
-    with patch.object(up.shutil, "which", return_value="/usr/bin/uv"):
+    with (
+        patch.object(up.shutil, "which", return_value="/usr/bin/uv"),
+        patch.object(up, "_current_tool_python", return_value=None),
+    ):
         assert up._swap_command("uv-tool", "v2.3.0", ["rerank", "code-index"]) == [
             "uv",
             "tool",
             "install",
             "--force",
             "--from",
-            f"git+{up._GIT_URL}@v2.3.0",
-            "agentalloy[code-index,rerank]",
+            f"agentalloy[code-index,rerank] @ git+{up._GIT_URL}@v2.3.0",
+            "agentalloy",
+        ]
+
+
+def test_swap_command_appends_python_for_existing_uv_tool_install():
+    # `--python` is only added for a pre-existing uv-tool install (so uv
+    # resolves against that tool's own interpreter), never for `pip` method
+    # even when uv is on PATH for the reinstall.
+    tool_python = up.Path("/home/user/.local/share/uv/tools/agentalloy/bin/python")
+    with (
+        patch.object(up.shutil, "which", return_value="/usr/bin/uv"),
+        patch.object(up, "_current_tool_python", return_value=tool_python),
+        patch.object(up.Path, "exists", return_value=True),
+    ):
+        assert up._swap_command("uv-tool", "v2.3.0", ["code-index"]) == [
+            "uv",
+            "tool",
+            "install",
+            "--force",
+            "--from",
+            f"agentalloy[code-index] @ git+{up._GIT_URL}@v2.3.0",
+            "--python",
+            str(tool_python),
+            "agentalloy",
+        ]
+        assert up._swap_command("pip", "v2.3.0", ["code-index"]) == [
+            "uv",
+            "tool",
+            "install",
+            "--force",
+            "--from",
+            f"agentalloy[code-index] @ git+{up._GIT_URL}@v2.3.0",
+            "agentalloy",
         ]
 
 
@@ -154,7 +202,10 @@ def test_swap_command_appends_extras_for_pip_fallback():
 
 def test_swap_command_no_extras_is_byte_for_byte_unchanged():
     """Empty list must produce the exact original (pre-extras-support) command."""
-    with patch.object(up.shutil, "which", return_value="/usr/bin/uv"):
+    with (
+        patch.object(up.shutil, "which", return_value="/usr/bin/uv"),
+        patch.object(up, "_current_tool_python", return_value=None),
+    ):
         assert up._swap_command("uv-tool", "v2.3.0", []) == up._swap_command("uv-tool", "v2.3.0")
     with patch.object(up.shutil, "which", return_value=None):
         assert up._swap_command("pip", "v2.3.0", []) == up._swap_command("pip", "v2.3.0")
