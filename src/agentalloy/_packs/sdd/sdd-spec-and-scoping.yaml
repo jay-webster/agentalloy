@@ -74,7 +74,7 @@ raw_prose: |
   # SDD — Spec
 
   **Checkpoint first.** You MUST confirm intake's contract exists under
-  `.agentalloy/contracts/` before scoping — if it does not, you skipped intake; STOP and go back.
+  `.agentalloy/contracts/active/` before scoping — if it does not, you skipped intake; STOP and go back.
   You MUST write `docs/spec/<slug>.md` with its **Acceptance Criteria** and **Out of Scope**
   sections. You MUST NOT design solutions or touch `src/` here — spec settles *what* and *done*,
   never *how*.
@@ -87,7 +87,7 @@ raw_prose: |
 
   ## 1. Start from the contract
 
-  Read `.agentalloy/contracts/spec/<slug>.md` — the work-item intake handed you
+  Read `.agentalloy/contracts/active/spec/<slug>.md` — the work-item intake handed you
   (the request and agreed scope), and the domain skills the proxy already
   front-loaded from it on entry. Sharpen what's there; don't re-interview from
   scratch.

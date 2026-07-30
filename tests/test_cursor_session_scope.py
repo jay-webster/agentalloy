@@ -32,7 +32,7 @@ _KEY_B = "22222222-bbbb-4bbb-8bbb-222222222222"
 def _seed(root: Path, phase: str, names: list[str]) -> None:
     (root / ".agentalloy").mkdir(parents=True, exist_ok=True)
     (root / ".agentalloy" / "phase").write_text(f"phase: {phase}\n")
-    d = root / ".agentalloy" / "contracts" / phase
+    d = root / ".agentalloy" / "contracts" / "active" / phase
     d.mkdir(parents=True, exist_ok=True)
     for n in names:
         (d / f"{n}.md").write_text(
@@ -87,12 +87,12 @@ class TestScopedReadWrite:
 class TestResolveWithSessionKey:
     def test_two_sessions_resolve_their_own_workitem(self, tmp_path: Path) -> None:
         _seed(tmp_path, "build", ["01-cache", "02-api", "03-log"])
-        _write_cursor_atomic(tmp_path, "build/01-cache.md", _KEY_A)
-        _write_cursor_atomic(tmp_path, "build/03-log.md", _KEY_B)
+        _write_cursor_atomic(tmp_path, "active/build/01-cache.md", _KEY_A)
+        _write_cursor_atomic(tmp_path, "active/build/03-log.md", _KEY_B)
         cid_a, _ = resolve_current_contract(tmp_path, "build", _KEY_A)
         cid_b, _ = resolve_current_contract(tmp_path, "build", _KEY_B)
-        assert cid_a == "build/01-cache.md"
-        assert cid_b == "build/03-log.md"
+        assert cid_a == "active/build/01-cache.md"
+        assert cid_b == "active/build/03-log.md"
 
     def test_keyless_fanout_is_strict_none(self, tmp_path: Path) -> None:
         # No scoped file, no shared cursor, ≥2 contracts → the resolver never guesses.
@@ -115,7 +115,7 @@ class TestClearAndTransition:
         # A session's scoped cursor from the old phase must not survive a transition
         # (it resolves by filename, not phase — the cross-phase-bleed trap).
         _seed(tmp_path, "build", ["01-cache", "02-api"])
-        _write_cursor_atomic(tmp_path, "build/02-api.md", _KEY_A)
+        _write_cursor_atomic(tmp_path, "active/build/02-api.md", _KEY_A)
         _write_phase_atomic(tmp_path, "qa")  # qa has no contracts → nothing seeded
         assert _read_cursor(tmp_path, _KEY_A) is None  # scoped cleared, no shared to fall back to
 
@@ -137,6 +137,6 @@ class TestCliSessionKey:
         _seed(tmp_path, "build", ["01-cache", "02-api"])
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", _KEY_A)
         run_task_start("02-api", tmp_path)
-        assert _read_cursor(tmp_path, _KEY_A) == "build/02-api.md"
+        assert _read_cursor(tmp_path, _KEY_A) == "active/build/02-api.md"
         assert _read_cursor(tmp_path, _KEY_B) is None  # no leak to another session
         assert not (tmp_path / ".agentalloy" / "cursor").exists()  # shared untouched

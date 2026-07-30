@@ -51,7 +51,7 @@ class TestDeriveInvariants:
         assert "approach.md" in inv
         assert "tasks.md" in inv
         assert "test-plan.md" in inv
-        assert ".agentalloy/contracts/build/" in inv
+        assert ".agentalloy/contracts/active/build/" in inv
 
     def test_shipped_prose_satisfies_its_own_invariants(self) -> None:
         # A shipped skill must never violate its own linter, or every

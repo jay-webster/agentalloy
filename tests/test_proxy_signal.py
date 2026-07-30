@@ -601,7 +601,7 @@ class TestTier2Cadence:
         # writes `.agentalloy/composed` — the injection path commits it post-delivery.
         from agentalloy.signals.skill_loader import _read_composed
 
-        assert result.pending_composed == "build/01-cache.md"
+        assert result.pending_composed == "active/build/01-cache.md"
         assert _read_composed(tmp_path) is None
 
     def test_tier2_quiet_after_compose(self, tmp_path: Path) -> None:
@@ -609,7 +609,7 @@ class TestTier2Cadence:
         _set_phase(tmp_path, "build")
         _seed_contract(tmp_path, "build", "01-cache")
         _set_announced(tmp_path, "build")
-        _set_state(tmp_path, "composed", "build/01-cache.md")
+        _set_state(tmp_path, "composed", "active/build/01-cache.md")
         result = self._run(tmp_path)
         assert result.should_compose is False
         assert result.announce is False

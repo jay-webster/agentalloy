@@ -198,7 +198,9 @@ def _build_skill_record(
         # A structurally-valid exit_gates leaf (see ingest._validate_gate_spec
         # and signals.predicates.eval_artifact_exists's args shape).
         "exit_gates": {
-            "artifact_exists": {"path": f".agentalloy/contracts/build/{effective_skill_id}-*.md"}
+            "artifact_exists": {
+                "path": f".agentalloy/contracts/active/build/{effective_skill_id}-*.md"
+            }
         },
     }
 
