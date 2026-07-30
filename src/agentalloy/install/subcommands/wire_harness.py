@@ -919,6 +919,16 @@ def _wire_proxy(
         records = writer(port, root, _force)
         return [r.to_dict() for r in records]
 
+    if harness == "qwen-code":
+        # qwen-code wires ~/.qwen/settings.json, not a repo instruction file —
+        # it has no legacy registry entry, so the instruction fallback below
+        # would crash on `root / None`. Delegate to the provider registry's
+        # working install_writer instead.
+        writer = REGISTRY["qwen-code"].install_writer
+        assert writer is not None, "qwen-code registers an install_writer"
+        records = writer(port, root, _force)
+        return [r.to_dict() for r in records]
+
     # All other harnesses: write a proxy instruction block
     return _wire_proxy_instruction(harness, port, root, scope)
 
@@ -1398,6 +1408,242 @@ def _wire_proxy_hermes_agent(port: int, root: Path, scope: str) -> list[dict[str
     _restart_hermes_gateway(root)
 
     return records
+
+
+def _wire_proxy_qwen_code(port: int, root: Path, scope: str) -> list[dict[str, Any]]:
+    """Wire Qwen Code to use the AgentAlloy proxy (per-repo interception).
+
+    Qwen Code config is home-scoped (``~/.qwen/settings.json``) with no per-repo
+    form, but the proxy needs a per-repo ``/proj/<token>`` discriminator. So we
+    isolate per repo via ``QWEN_HOME``: a repo-local ``.qwen/`` activated by
+    ``.qwen/.agentalloy-env`` (sourced directly, or automatically on ``cd``
+    via the activation carriers written below — ``.envrc`` for direnv users,
+    a ``mise.toml`` ``[env]`` entry for mise users, chosen by PATH detection).
+
+    The repo-local ``settings.json`` is a copy of the user's global one with
+    only the ``model`` block redirected at the proxy, so their other tuning
+    survives. Qwen Code's settings merge order is system → user → workspace,
+    so the repo-local file takes precedence without touching the user's
+    global config.
+
+    ``scope`` is ignored: qwen-code is inherently per-repo (like claude-code),
+    so it always wires the repo-local carrier at *root*.
+    """
+    import json
+
+    from agentalloy.api.proxy_context import encode_proj_token
+
+    _ = scope
+    token = encode_proj_token(root)
+    proxy_base = f"http://localhost:{port}/proj/{token}/v1"
+
+    # Start from the user's global settings so their non-endpoint settings
+    # survive under QWEN_HOME; fall back to a minimal config if there is none.
+    user_settings = Path.home() / ".qwen" / "settings.json"
+    settings_data: dict[str, Any] = {}
+    if user_settings.exists():
+        try:
+            loaded = json.loads(user_settings.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                settings_data = loaded
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Add a proxy entry to modelProviders.openai[] — do NOT overwrite existing
+    # provider entries. The top-level model.baseUrl is redirected to the proxy
+    # (see below), so Qwen Code routes all calls through the proxy; the
+    # existing providers stay intact for direct-use scenarios.
+    if "modelProviders" in settings_data and isinstance(settings_data["modelProviders"], dict):
+        providers = settings_data["modelProviders"]
+        openai_providers = providers.get("openai")
+        if isinstance(openai_providers, list):
+            proxy_exists = any(
+                isinstance(e, dict) and "/proj/" in str(e.get("baseUrl", ""))
+                for e in openai_providers
+            )
+            if not proxy_exists:
+                openai_providers.append(
+                    {"id": "agentalloy-proxy", "name": "AgentAlloy", "baseUrl": proxy_base}
+                )
+        else:
+            providers["openai"] = [
+                {"id": "agentalloy-proxy", "name": "AgentAlloy", "baseUrl": proxy_base}
+            ]
+    else:
+        settings_data["modelProviders"] = {
+            "openai": [{"id": "agentalloy-proxy", "name": "AgentAlloy", "baseUrl": proxy_base}]
+        }
+
+    # Update top-level model.baseUrl so Qwen Code actually routes through it.
+    if "model" in settings_data and isinstance(settings_data["model"], dict):
+        settings_data["model"]["baseUrl"] = proxy_base
+    else:
+        settings_data["model"] = {"baseUrl": proxy_base}
+
+    # Ensure auth type is openai — the proxy accepts any bearer value.
+    if "security" in settings_data and isinstance(settings_data["security"], dict):
+        auth = settings_data["security"].get("auth")
+        if isinstance(auth, dict):
+            auth["selectedType"] = "openai"
+    else:
+        settings_data["security"] = {"auth": {"apiKey": "local", "selectedType": "openai"}}
+
+    records: list[dict[str, Any]] = []
+
+    repo_settings = root / ".qwen" / "settings.json"
+    repo_settings.parent.mkdir(parents=True, exist_ok=True)
+    original_settings = _capture_original(repo_settings)
+    settings_content = json.dumps(settings_data, indent=2) + "\n"
+    install_state._atomic_write(repo_settings, settings_content)  # pyright: ignore[reportPrivateUsage]
+    records.append(
+        {
+            "path": str(repo_settings),
+            "action": "wrote_new_file" if original_settings is None else "replaced_file",
+            "content_sha256": _sha256(settings_content),
+            **({"original_content": original_settings} if original_settings is not None else {}),
+        }
+    )
+
+    env_path = root / ".qwen" / ".agentalloy-env"
+    original_env = _capture_original(env_path)
+    env_text = 'export QWEN_HOME="$PWD/.qwen"\n'
+    install_state._atomic_write(env_path, env_text)  # pyright: ignore[reportPrivateUsage]
+    records.append(
+        {
+            "path": str(env_path),
+            "action": "wrote_new_file" if original_env is None else "replaced_file",
+            "content_sha256": _sha256(env_text),
+            **({"original_content": original_env} if original_env is not None else {}),
+        }
+    )
+
+    # Activation carriers: auto-set QWEN_HOME on cd, but only via managers
+    # actually installed (PATH detection) — qwen-code has no native settings-file
+    # carrier for repo isolation itself, so the env var is the only activation
+    # path, and a carrier no manager reads is just litter.
+    managers = _activation_managers()
+    sentinel_begin = "# <!-- BEGIN agentalloy install -->"
+    sentinel_end = "# <!-- END agentalloy install -->"
+    rel_env = env_path.relative_to(root).as_posix()
+    activated: list[str] = []
+
+    envrc_path = root / ".envrc"
+    if "direnv" in managers or envrc_path.exists():
+        envrc_original = _capture_original(envrc_path)
+        envrc_block = f"{sentinel_begin}\nsource_env {rel_env}\n{sentinel_end}"
+        if envrc_path.exists():
+            envrc_content = envrc_path.read_text()
+            if sentinel_begin in envrc_content and sentinel_end in envrc_content:
+                begin_idx = envrc_content.index(sentinel_begin)
+                end_idx = envrc_content.index(sentinel_end) + len(sentinel_end)
+                if end_idx < len(envrc_content) and envrc_content[end_idx] == "\n":
+                    end_idx += 1
+                envrc_content = (
+                    envrc_content[:begin_idx] + envrc_block + "\n" + envrc_content[end_idx:]
+                )
+            else:
+                if envrc_content and not envrc_content.endswith("\n"):
+                    envrc_content += "\n"
+                envrc_content += envrc_block + "\n"
+        else:
+            envrc_content = envrc_block + "\n"
+        install_state._atomic_write(envrc_path, envrc_content)  # pyright: ignore[reportPrivateUsage]
+        records.append(
+            {
+                "path": str(envrc_path),
+                "action": "wrote_new_file" if envrc_original is None else "replaced_file",
+                "content_sha256": _sha256(envrc_block),
+                **({"original_content": envrc_original} if envrc_original is not None else {}),
+            }
+        )
+        activated.append(".envrc (direnv: run `direnv allow` once)")
+
+    has_mise_config = (root / "mise.toml").exists() or (root / ".mise.toml").exists()
+    if "mise" in managers or has_mise_config:
+        mise_result = _write_qwen_mise_env(root, records)
+        if mise_result is not None:
+            mise_path, created = mise_result
+            # Auto-trust only a file we authored in full — blessing a
+            # pre-existing, possibly unreviewed config on the user's behalf
+            # would bypass mise's trust prompt for content we didn't write.
+            if created and _mise_trust(mise_path):
+                activated.append(f"{mise_path.name} [env] (trusted; loads on cd)")
+            else:
+                activated.append(f"{mise_path.name} [env] (run `mise trust` once; loads on cd)")
+
+    if activated:
+        print(
+            f"[AgentAlloy] QWEN_HOME auto-activation wired: {'; '.join(activated)}.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"[AgentAlloy] No direnv/mise detected — activate manually per shell: "
+            f"`source {rel_env}` before running qwen in this repo.",
+            file=sys.stderr,
+        )
+
+    return records
+
+
+def _write_qwen_mise_env(root: Path, records: list[dict[str, Any]]) -> tuple[Path, bool] | None:
+    """Add ``QWEN_HOME`` to the repo's mise config ``[env]`` table.
+
+    Mirrors ``_write_hermes_mise_env`` but targets ``QWEN_HOME="$PWD/.qwen"``.
+    """
+    import tomllib
+
+    sentinel_begin = "# <!-- BEGIN agentalloy install -->"
+    sentinel_end = "# <!-- END agentalloy install -->"
+    key_line = 'QWEN_HOME = "{{config_root}}/.qwen"'
+
+    mise_path = next(
+        (p for name in ("mise.toml", ".mise.toml") if (p := root / name).exists()),
+        root / "mise.toml",
+    )
+    original = _capture_original(mise_path)
+    content = original if original is not None else ""
+
+    if sentinel_begin in content and sentinel_end in content:
+        begin_idx = content.index(sentinel_begin)
+        end_idx = content.index(sentinel_end) + len(sentinel_end)
+        had_env_outside = "[env]" in (content[:begin_idx] + content[end_idx:])
+        block = (
+            f"{sentinel_begin}\n{key_line}\n{sentinel_end}"
+            if had_env_outside
+            else f"{sentinel_begin}\n[env]\n{key_line}\n{sentinel_end}"
+        )
+        new_content = content[:begin_idx] + block + content[end_idx:]
+    elif "[env]" in content:
+        header_end = content.index("[env]") + len("[env]")
+        insertion = f"\n{sentinel_begin}\n{key_line}\n{sentinel_end}"
+        new_content = content[:header_end] + insertion + content[header_end:]
+    else:
+        block = f"{sentinel_begin}\n[env]\n{key_line}\n{sentinel_end}\n"
+        if content and not content.endswith("\n"):
+            content += "\n"
+        new_content = content + block
+
+    try:
+        tomllib.loads(new_content)
+    except tomllib.TOMLDecodeError as e:
+        print(
+            f"[AgentAlloy] {mise_path.name} edit would produce invalid TOML ({e}) — "
+            "skipped the mise carrier.",
+            file=sys.stderr,
+        )
+        return None
+
+    install_state._atomic_write(mise_path, new_content)  # pyright: ignore[reportPrivateUsage]
+    records.append(
+        {
+            "path": str(mise_path),
+            "action": "wrote_new_file" if original is None else "replaced_file",
+            "content_sha256": _sha256(new_content),
+            **({"original_content": original} if original is not None else {}),
+        }
+    )
+    return mise_path, original is None
 
 
 def _wire_proxy_opencode(port: int, root: Path) -> list[dict[str, Any]]:

@@ -128,6 +128,19 @@ class TestWireMultiple:
         assert out["lifecycle_mode"] == "full"
         assert out["phase"] == "intake"
 
+    def test_qwen_code_stacks_alongside_claude_code(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """qwen-code (repo-local QWEN_HOME carrier) coexists with claude-code
+        without either harness's install_writer clobbering the other's files."""
+        monkeypatch.chdir(repo_root)
+        rc = wire._run(_wire(["claude-code", "qwen-code"]))
+        assert rc == 0
+        assert (repo_root / ".claude" / "settings.local.json").exists()
+        assert (repo_root / ".qwen" / "settings.json").exists()
+        assert (repo_root / ".qwen" / ".agentalloy-env").exists()
+        assert _wired_harnesses(repo_root) == {"claude-code", "qwen-code"}
+
 
 # ---------------------------------------------------------------------------
 # unwire --harness <name>
@@ -188,6 +201,29 @@ class TestUnwireSingleHarness:
 
         unwire._run(_unwire("hermes-agent"))  # remove the proxy-only harness
         assert contract.exists(), "user contracts are never touched by unwire"
+
+    def test_unwire_qwen_code_preserves_other_and_lifecycle(
+        self, repo_root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.chdir(repo_root)
+        wire._run(_wire(["claude-code", "qwen-code"]))
+        qwen_settings = repo_root / ".qwen" / "settings.json"
+        qwen_env = repo_root / ".qwen" / ".agentalloy-env"
+        phase = repo_root / ".agentalloy" / "phase"
+        assert phase.exists()
+        capsys.readouterr()
+
+        rc = unwire._run(_unwire("qwen-code"))
+        assert rc == 0
+
+        # qwen-code's repo-local carriers are gone...
+        assert not qwen_settings.exists()
+        assert not qwen_env.exists()
+        # ...claude-code + the shared lifecycle state survive...
+        assert (repo_root / ".claude" / "settings.local.json").exists()
+        assert phase.exists(), "lifecycle phase must survive while claude-code remains wired"
+        # ...and state now lists only the remaining harness.
+        assert _wired_harnesses(repo_root) == {"claude-code"}
 
 
 # ---------------------------------------------------------------------------
@@ -314,3 +350,30 @@ class TestPerRepoIsolation:
         unwire._run(_unwire("hermes-agent"))
         assert not cfg_a.exists(), "repo A's carrier is removed"
         assert cfg_b.exists(), "repo B's carrier is untouched"
+
+    def test_qwen_carriers_are_independent_per_repo(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        repo_a = tmp_path / "repo-a"
+        repo_b = tmp_path / "repo-b"
+        for r in (repo_a, repo_b):
+            r.mkdir()
+            (r / "pyproject.toml").write_text("")
+
+        monkeypatch.chdir(repo_a)
+        wire._run(_wire("qwen-code"))
+        monkeypatch.chdir(repo_b)
+        wire._run(_wire("qwen-code"))
+        capsys.readouterr()
+
+        settings_a = repo_a / ".qwen" / "settings.json"
+        settings_b = repo_b / ".qwen" / "settings.json"
+        assert settings_a.exists() and settings_b.exists()
+        # Each carries its own /proj/<token>, so the two configs differ.
+        assert settings_a.read_text() != settings_b.read_text()
+
+        # Unwiring qwen-code from repo A must NOT touch repo B's independent carrier.
+        monkeypatch.chdir(repo_a)
+        unwire._run(_unwire("qwen-code"))
+        assert not settings_a.exists(), "repo A's carrier is removed"
+        assert settings_b.exists(), "repo B's carrier is untouched"
