@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
+from agentalloy.install import state as install_state
 from agentalloy.install.__main__ import build_parser
 from agentalloy.install.subcommands import code as code_mod
 
@@ -50,6 +51,8 @@ class TestParserRegistration:
         assert _parse(["code", "callees", "a.b"]).func is code_mod._run_callees  # pyright: ignore[reportPrivateUsage]
         assert _parse(["code", "bundle", "task"]).func is code_mod._run_bundle  # pyright: ignore[reportPrivateUsage]
         assert _parse(["code", "remove", "--yes"]).func is code_mod._run_remove  # pyright: ignore[reportPrivateUsage]
+        assert _parse(["code", "enable"]).func is code_mod._run_enable  # pyright: ignore[reportPrivateUsage]
+        assert _parse(["code", "disable"]).func is code_mod._run_disable  # pyright: ignore[reportPrivateUsage]
         assert _parse(["code", "watch", "status"]).func is code_mod._run_watch  # pyright: ignore[reportPrivateUsage]
         assert _parse(["code", "watch", "enable"]).func is code_mod._run_watch_enable  # pyright: ignore[reportPrivateUsage]
         assert _parse(["code", "watch", "disable", "/x"]).func is code_mod._run_watch_disable  # pyright: ignore[reportPrivateUsage]
@@ -174,7 +177,85 @@ class TestStatus:
         args = _parse(["code", "status", "--port", "47950", "--json"])
         assert args.func(args) == 0
         payload = json.loads(capsys.readouterr().out)
-        assert set(payload) == {"repos", "active_jobs"}
+        assert set(payload) == {"repos", "active_jobs", "recent_failures"}
+
+    def test_status_surfaces_latest_failed_job(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A repo whose latest attempt failed shows a Recent failures line with
+        the error — instead of the failure being silently discarded."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/health":
+                return httpx.Response(200, json=_HEALTH_ENABLED)
+            if request.url.path == "/code/repos":
+                return httpx.Response(200, json=[])
+            if request.url.path == "/code/index/jobs":
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "id": "jf",
+                            "slug": "org__repo",
+                            "state": "failed",
+                            "phase": "markdown",
+                            "progress": 75.0,
+                            "error": "LMUnavailable: [Errno 111] Connection refused",
+                        },
+                        {
+                            "id": "jok",
+                            "slug": "other__repo",
+                            "state": "done",
+                            "phase": None,
+                            "progress": 100.0,
+                        },
+                    ],
+                )
+            raise AssertionError(f"unexpected path {request.url.path}")
+
+        _mock_client(monkeypatch, handler)
+        args = _parse(["code", "status", "--port", "47950"])
+        assert args.func(args) == 0
+        out = capsys.readouterr().out
+        assert "Recent failures (1)" in out
+        assert "org__repo" in out
+        assert "Connection refused" in out
+        # A slug whose latest attempt succeeded is not reported as a failure.
+        assert "other__repo" not in out.split("Recent failures")[1]
+
+    def test_status_failure_shadowed_by_later_success(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An older failure must not surface once a newer run for the same slug
+        succeeded (jobs arrive newest-first)."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/health":
+                return httpx.Response(200, json=_HEALTH_ENABLED)
+            if request.url.path == "/code/repos":
+                return httpx.Response(200, json=[])
+            if request.url.path == "/code/index/jobs":
+                return httpx.Response(
+                    200,
+                    json=[
+                        {"id": "jok", "slug": "org__repo", "state": "done", "progress": 100.0},
+                        {
+                            "id": "jf",
+                            "slug": "org__repo",
+                            "state": "failed",
+                            "phase": "markdown",
+                            "progress": 75.0,
+                            "error": "boom",
+                        },
+                    ],
+                )
+            raise AssertionError(f"unexpected path {request.url.path}")
+
+        _mock_client(monkeypatch, handler)
+        args = _parse(["code", "status", "--port", "47950"])
+        assert args.func(args) == 0
+        out = capsys.readouterr().out
+        assert "Recent failures" not in out
 
 
 class TestSearch:
@@ -440,6 +521,94 @@ class TestRemove:
         assert args.func(args) == 0
         assert deleted == ["/code/index/org__repo"]
         assert "Removed index" in capsys.readouterr().out
+
+
+class TestEnableDisable:
+    def test_disable_always_succeeds_and_writes_zero(
+        self, tmp_state_dir: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        args = _parse(["code", "disable"])
+        assert args.func(args) == 0
+        env_path = install_state.env_path()
+        assert env_path.read_text() == "CODE_INDEX_ENABLED=0\n"
+        out = capsys.readouterr().out
+        assert "CODE_INDEX_ENABLED=0" in out
+        assert "disabled" in out
+
+    def test_enable_blocked_when_extra_missing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_state_dir: tuple[Path, Path],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import importlib
+
+        real_import_module = importlib.import_module
+
+        def _fake_import(name: str, *a: Any, **kw: Any) -> Any:
+            if name == "agentalloy.code_index.api":
+                raise ImportError("no module named agentalloy.code_index.api")
+            return real_import_module(name, *a, **kw)
+
+        monkeypatch.setattr(importlib, "import_module", _fake_import)
+
+        args = _parse(["code", "enable"])
+        assert args.func(args) == 1
+        err = capsys.readouterr().err
+        assert "ERROR: Cannot enable code-index" in err
+        assert "agentalloy[code-index]" in err
+        assert not install_state.env_path().exists()
+
+    def test_enable_succeeds_when_extra_installed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_state_dir: tuple[Path, Path],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import importlib
+
+        monkeypatch.setattr(importlib, "import_module", lambda name, *a, **kw: object())
+
+        args = _parse(["code", "enable"])
+        assert args.func(args) == 0
+        assert install_state.env_path().read_text() == "CODE_INDEX_ENABLED=1\n"
+        out = capsys.readouterr().out
+        assert "CODE_INDEX_ENABLED=1" in out
+        assert "enabled" in out
+
+
+class TestPatchEnvKey:
+    def test_creates_file_and_parent_dir_from_scratch(
+        self, tmp_state_dir: tuple[Path, Path]
+    ) -> None:
+        env_path = install_state.env_path()
+        assert not env_path.parent.exists()
+        result = code_mod._patch_env_key("CODE_INDEX_ENABLED", "1")  # pyright: ignore[reportPrivateUsage]
+        assert result == env_path
+        assert env_path.read_text() == "CODE_INDEX_ENABLED=1\n"
+
+    def test_appends_when_key_absent(self, tmp_state_dir: tuple[Path, Path]) -> None:
+        env_path = install_state.env_path()
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("OTHER_KEY=foo\n")
+        code_mod._patch_env_key("CODE_INDEX_ENABLED", "1")  # pyright: ignore[reportPrivateUsage]
+        assert env_path.read_text() == "OTHER_KEY=foo\nCODE_INDEX_ENABLED=1\n"
+
+    def test_replaces_existing_line_in_place(self, tmp_state_dir: tuple[Path, Path]) -> None:
+        env_path = install_state.env_path()
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("OTHER_KEY=foo\nCODE_INDEX_ENABLED=0\nTHIRD=bar\n")
+        code_mod._patch_env_key("CODE_INDEX_ENABLED", "1")  # pyright: ignore[reportPrivateUsage]
+        assert env_path.read_text() == "OTHER_KEY=foo\nCODE_INDEX_ENABLED=1\nTHIRD=bar\n"
+
+    def test_ignores_commented_line_and_appends_instead(
+        self, tmp_state_dir: tuple[Path, Path]
+    ) -> None:
+        env_path = install_state.env_path()
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("# CODE_INDEX_ENABLED=0\n")
+        code_mod._patch_env_key("CODE_INDEX_ENABLED", "1")  # pyright: ignore[reportPrivateUsage]
+        assert env_path.read_text() == "# CODE_INDEX_ENABLED=0\nCODE_INDEX_ENABLED=1\n"
 
 
 class TestWatch:

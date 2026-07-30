@@ -10,6 +10,7 @@ Thin HTTP clients against the local agentalloy service:
     agentalloy code callees <fqn> [--repo]
     agentalloy code bundle <task> [--repo] [--budget N]
     agentalloy code remove [path] [--yes]
+    agentalloy code enable|disable                      CODE_INDEX_ENABLED master switch
     agentalloy code watch enable|disable [path]         Per-repo watch enrollment
     agentalloy code watch status|start|stop             Master switch + enrollment report
 
@@ -295,8 +296,25 @@ def _run_status(args: argparse.Namespace) -> int:
         return _service_down_error(port, exc)
 
     active = [j for j in jobs if j.get("state") in ("queued", "running")]
+    active_slugs = {j.get("slug") for j in active}
+
+    # Latest terminal attempt per slug (jobs arrive newest-first) — surfaced
+    # only when it failed. A stale failure never shadows a later success, and a
+    # slug with a re-run already in flight is left to the active section. Without
+    # this, a failed job (with its error) was fetched and silently discarded, so
+    # a repo that never finished indexing looked identical to one never tried.
+    recent_failures: list[dict[str, Any]] = []
+    seen_slugs: set[Any] = set()
+    for j in jobs:
+        slug = j.get("slug")
+        if j.get("state") in ("queued", "running") or slug in seen_slugs:
+            continue
+        seen_slugs.add(slug)
+        if slug not in active_slugs and j.get("state") in ("failed", "interrupted"):
+            recent_failures.append(j)
+
     if args.json:
-        _print_json({"repos": repos, "active_jobs": active})
+        _print_json({"repos": repos, "active_jobs": active, "recent_failures": recent_failures})
         return 0
 
     print(f"Indexed repos ({len(repos)}):")
@@ -319,6 +337,16 @@ def _run_status(args: argparse.Namespace) -> int:
             f"  {j.get('id')}  {j.get('slug')}  [{j.get('phase') or j.get('state')}] "
             f"{float(j.get('progress') or 0.0):.1f}%"
         )
+    if recent_failures:
+        print(f"Recent failures ({len(recent_failures)}):")
+        for j in recent_failures:
+            err = (j.get("error") or "").strip().splitlines()
+            first = err[0] if err else "(no error recorded)"
+            print(
+                f"  {j.get('slug')}  [{j.get('state')} @ {j.get('phase') or '?'} "
+                f"{float(j.get('progress') or 0.0):.0f}%]  {first}"
+            )
+            print(f"    re-run: `agentalloy code index --force`  (job {j.get('id')})")
     return 0
 
 
@@ -491,6 +519,79 @@ def _run_remove(args: argparse.Namespace) -> int:
     else:
         print(f"Removed index for {slug}.")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# enable/disable — the CODE_INDEX_ENABLED master switch as a single command.
+#
+# Deliberately NOT `write-env` (which re-renders a whole preset template and
+# refuses a hand-edited .env without --force): this is a surgical one-line
+# patch, safe to run on any .env regardless of provenance, so it can never
+# clobber unrelated settings.
+# ---------------------------------------------------------------------------
+
+
+def _patch_env_key(key: str, value: str) -> Path:
+    """Set ``key=value`` in the user-scoped ``.env``, all other lines untouched.
+
+    Replaces an existing (uncommented) ``key=...``/``export key=...`` line in
+    place; appends a new line if absent. Creates the file (and its parent
+    directory) if it doesn't exist yet.
+    """
+    path = install_state.env_path()
+    lines = path.read_text().splitlines() if path.exists() else []
+    new_line = f"{key}={value}"
+    for i, raw in enumerate(lines):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        existing_key = stripped.split("=", 1)[0].strip()
+        if existing_key.startswith("export "):
+            existing_key = existing_key[len("export ") :].strip()
+        if existing_key == key:
+            lines[i] = new_line
+            break
+    else:
+        lines.append(new_line)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    install_state._atomic_write(path, "\n".join(lines) + "\n")  # pyright: ignore[reportPrivateUsage]
+    return path
+
+
+def _run_module_toggle(*, enabled: bool) -> int:
+    # Guard: code-index can only be enabled when the [code-index] extra is
+    # installed — otherwise the service starts with modules.code_index=unavailable.
+    if enabled:
+        import importlib
+
+        try:
+            importlib.import_module("agentalloy.code_index.api")
+        except ImportError:
+            print(
+                "ERROR: Cannot enable code-index: the [code-index] extra is not installed.",
+                file=sys.stderr,
+            )
+            print(
+                "FIX:   Install it with `uv tool install 'agentalloy[code-index]'`, "
+                "then re-run `agentalloy code enable`.",
+                file=sys.stderr,
+            )
+            return 1
+    path = _patch_env_key("CODE_INDEX_ENABLED", "1" if enabled else "0")
+    state_word = "enabled" if enabled else "disabled"
+    print(f"CODE_INDEX_ENABLED={'1' if enabled else '0'} written to {path}.")
+    print(f"Code-index module {state_word}. Run `agentalloy server-restart` to apply.")
+    return 0
+
+
+def _run_enable(args: argparse.Namespace) -> int:
+    del args
+    return _run_module_toggle(enabled=True)
+
+
+def _run_disable(args: argparse.Namespace) -> int:
+    del args
+    return _run_module_toggle(enabled=False)
 
 
 # ---------------------------------------------------------------------------
@@ -679,6 +780,15 @@ def add_parser(
     _add_common(remove_p)
     remove_p.set_defaults(func=_run_remove)
 
+    enable_module_p = sub.add_parser(
+        "enable", help="Turn the code-index module on (CODE_INDEX_ENABLED=1)."
+    )
+    enable_module_p.set_defaults(func=_run_enable)
+    disable_module_p = sub.add_parser(
+        "disable", help="Turn the code-index module off (CODE_INDEX_ENABLED=0)."
+    )
+    disable_module_p.set_defaults(func=_run_disable)
+
     watch_p = sub.add_parser(
         "watch", help="Per-repo watch enrollment + the CODE_INDEX_WATCH master switch."
     )
@@ -714,7 +824,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     if getattr(args, "code_cmd", None) is None:
         print(
             "Usage: agentalloy code "
-            "{index,status,search,symbol,callers,callees,bundle,remove,watch} ...",
+            "{index,status,search,symbol,callers,callees,bundle,remove,enable,disable,watch} ...",
             file=sys.stderr,
         )
         return 1
