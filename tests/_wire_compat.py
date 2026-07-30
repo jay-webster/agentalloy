@@ -35,6 +35,7 @@ _REGISTRY_PROVIDERS_USING_HOME = frozenset(
         "opencode",
         "codex",
         "openclaw",
+        "qwen-code",  # reads global ~/.qwen/settings.json, writes repo-local .qwen/
         "cline",  # user-scoped ~/.cline/data/settings/providers.json
         # REGISTRY providers don't match legacy proxy behavior
         "aider",
