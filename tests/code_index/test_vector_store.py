@@ -5,9 +5,11 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import lancedb
+import pyarrow as pa
 import pytest
 
-from agentalloy.code_index.store.vector_store import LanceCodeVectorStore
+from agentalloy.code_index.store.vector_store import CODE_VECTORS_SCHEMA, LanceCodeVectorStore
 from agentalloy.storage.protocols import (
     EMBEDDING_DIM,
     CodeVectorRow,
@@ -112,6 +114,20 @@ def test_search_similar_ordering(store: LanceCodeVectorStore) -> None:
 
 def test_search_similar_empty_dataset(store: LanceCodeVectorStore) -> None:
     assert store.search_similar(vec(0)) == []
+
+
+def test_schema_drift_recovery(tmp_path: Path) -> None:
+    """A dataset created with a stale schema must reopen cleanly, not raise on
+    the ``exist_ok=True`` schema mismatch."""
+    path = tmp_path / "vectors.lance"
+    stale_schema = pa.schema([f for f in CODE_VECTORS_SCHEMA if f.name != "text"])
+    db = lancedb.connect(str(path.parent))
+    db.create_table(path.stem, schema=stale_schema)
+
+    store = LanceCodeVectorStore(path)
+    assert store._table.schema == CODE_VECTORS_SCHEMA
+    store.upsert([row("m.a", vec(0))])
+    assert store.count() == 1
 
 
 def test_search_bm25(store: LanceCodeVectorStore) -> None:
