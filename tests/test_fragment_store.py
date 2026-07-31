@@ -30,6 +30,7 @@ def _frag(i: int) -> FragmentEmbedding:
         embedding_model="nomic-embed-text-v1.5",
         prose=f"fragment {i} about testing lance retrieval and duckdb",
         phase_scope=(["build"], ["design", "build"], None)[i % 3],
+        domain_tags=(["infra"], ["infra", "security"], None)[i % 3],
     )
 
 
@@ -67,6 +68,20 @@ def test_filters(store):
     assert all(h.skill_id != "s0" for h in dep)
     eng = store.search_similar(_vec(0.0), categories=["engineering"], k=10)
     assert len(eng) >= 1
+
+
+def test_domain_tags_filter(store):
+    store.insert_embeddings([_frag(i) for i in range(6)])
+    # f1/f4 -> ["infra", "security"]; f2/f5 -> None (excluded by array_has_any).
+    hits = store.search_similar(_vec(0.0), domain_tags=["security"], k=10)
+    assert {h.fragment_id for h in hits} == {"f1", "f4"}
+
+    store.rebuild_fts_index()
+    bm25_hits = store.search_bm25("testing retrieval", domain_tags=["security"], k=10)
+    assert bm25_hits and {h.fragment_id for h in bm25_hits} <= {"f1", "f4"}
+
+    none_tagged = store.search_similar(_vec(0.0), domain_tags=["security"], k=10)
+    assert all(h.fragment_id not in {"f2", "f5"} for h in none_tagged)
 
 
 def test_bm25(store):

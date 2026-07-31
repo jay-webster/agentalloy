@@ -139,6 +139,72 @@ class TestQwenCodeProxyWiring:
         assert model["baseUrl"].startswith("http://localhost:6666/proj/")
         assert model["name"] == "qwen3-coder-plus"
 
+    def test_repo_scope_inherits_env_key_context_window_and_repoints_default_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The proxy provider entry must carry an ``envKey`` (Qwen Code refuses to
+        switch models without one) and inherit ``generationConfig.contextWindowSize``
+        from the previously active default provider; ``defaultModel.modelId`` must be
+        repointed at the proxy or Qwen Code keeps using the old default."""
+        fake_home = tmp_path / "home"
+        (fake_home / ".qwen").mkdir(parents=True)
+        (fake_home / ".qwen" / "settings.json").write_text(
+            json.dumps(
+                {
+                    "model": {
+                        "name": "dashscope",
+                        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    },
+                    "modelProviders": {
+                        "openai": [
+                            {
+                                "id": "dashscope",
+                                "name": "DashScope",
+                                "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                                "envKey": "DASHSCOPE_API_KEY",
+                                "generationConfig": {"contextWindowSize": 131072},
+                            }
+                        ]
+                    },
+                    "defaultModel": {"authType": "openai", "modelId": "dashscope"},
+                }
+            )
+        )
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        wire_compat("qwen-code", port=6666, root=tmp_path, scope="repo")
+
+        settings = _read_repo_settings(tmp_path)
+        providers = settings["modelProviders"]["openai"]  # type: ignore[index]
+        proxy_entry = next(p for p in providers if p["id"] == "agentalloy-proxy")
+        assert proxy_entry["envKey"] == "DASHSCOPE_API_KEY"
+        assert proxy_entry["generationConfig"]["contextWindowSize"] == 131072
+
+        default_model = settings["defaultModel"]
+        assert isinstance(default_model, dict)
+        assert default_model == {"authType": "openai", "modelId": "agentalloy-proxy"}
+
+    def test_repo_scope_defaults_env_key_when_no_matching_provider(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no matching prior provider entry, envKey falls back to
+        ``OPENAI_API_KEY`` and defaultModel still gets repointed at the proxy."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        wire_compat("qwen-code", port=6666, root=tmp_path, scope="repo")
+
+        settings = _read_repo_settings(tmp_path)
+        providers = settings["modelProviders"]["openai"]  # type: ignore[index]
+        proxy_entry = next(p for p in providers if p["id"] == "agentalloy-proxy")
+        assert proxy_entry["envKey"] == "OPENAI_API_KEY"
+        assert "generationConfig" not in proxy_entry
+
+        default_model = settings["defaultModel"]
+        assert isinstance(default_model, dict)
+        assert default_model == {"authType": "openai", "modelId": "agentalloy-proxy"}
+
     def test_repo_scope_idempotent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Re-wiring the same repo does not duplicate the proxy provider entry."""
         fake_home = tmp_path / "home"
