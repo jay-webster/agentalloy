@@ -199,8 +199,9 @@ class TestFullProxyFlow:
         """Signal match -> compose -> inject into LAST USER message -> forward.
 
         Parity with the Anthropic passthrough: the composed block lands in the
-        last user message (phase-stamped), and the system message stays
-        byte-identical (prompt-cache safe).
+        last user message (phase-stamped), and the leading system message keeps
+        its original content as a byte-identical prefix, with the phase's
+        system-prompt directive appended additively.
         """
         compose_output = "# Skill: Test\nAlways be helpful."
         orchestrator = _make_mock_orchestrator(compose_output=compose_output)
@@ -246,9 +247,12 @@ class TestFullProxyFlow:
         assert last_user["role"] == "user"
         assert "phase=build" in last_user["content"]
         assert compose_output in last_user["content"]
-        # System message is byte-identical (untouched).
+        # System message's cached prefix preserved; phase directive appended additively.
         assert sent["messages"][0]["role"] == "system"
-        assert sent["messages"][0]["content"] == "You are an assistant."
+        assert sent["messages"][0]["content"].startswith("You are an assistant.")
+        assert (
+            "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in sent["messages"][0]["content"]
+        )
 
         # Telemetry should show composed status
         app.state.telemetry_store.record_composition_trace.assert_called_once()

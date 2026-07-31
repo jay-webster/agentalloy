@@ -19,6 +19,7 @@ from unittest import TestCase, main
 
 # Import agentalloy providers (must be before sys.path modification for E402)
 from agentalloy.providers import REGISTRY, Capability, HarnessSpec, Protocol, WireRecord
+from agentalloy.providers.base import filter_tools_for_phase
 
 # Ensure the src directory is on the path so we can import agentalloy.
 _src = Path(__file__).resolve().parent.parent / "src"
@@ -370,6 +371,46 @@ class TestTypeStubs(TestCase):
         self.assertTrue(callable(_noop_install))
         result = _noop_install(8080, Path("/tmp"), force=True)
         self.assertIsInstance(result, list)
+
+
+class TestFilterToolsForPhase(TestCase):
+    """Phase-gated tool filtering: denies write-capable tools pre-build."""
+
+    ANTHROPIC_TOOLS = [
+        {"name": "write_file"},
+        {"name": "edit"},
+        {"name": "notebook_edit"},
+        {"name": "read_file"},
+        {"name": "bash"},
+    ]
+    OPENAI_TOOLS = [
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "read_file"}},
+    ]
+
+    def test_denies_gated_tools_in_intake_spec_design(self):
+        for phase in ("intake", "spec", "design"):
+            filtered = filter_tools_for_phase(self.ANTHROPIC_TOOLS, phase)
+            names = {t["name"] for t in filtered}
+            self.assertEqual(names, {"read_file", "bash"}, msg=f"phase={phase}")
+
+    def test_allows_all_tools_in_build_qa_ship(self):
+        for phase in ("build", "qa", "ship", "sdd-fast", None):
+            filtered = filter_tools_for_phase(self.ANTHROPIC_TOOLS, phase)
+            self.assertIs(filtered, self.ANTHROPIC_TOOLS, msg=f"phase={phase}")
+
+    def test_openai_wire_shape_gated_by_nested_function_name(self):
+        filtered = filter_tools_for_phase(self.OPENAI_TOOLS, "spec")
+        names = {t["function"]["name"] for t in filtered}
+        self.assertEqual(names, {"read_file"})
+
+    def test_no_op_returns_same_list_reference(self):
+        tools = [{"name": "read_file"}]
+        filtered = filter_tools_for_phase(tools, "spec")
+        self.assertIs(filtered, tools)
+
+    def test_empty_tools_list(self):
+        self.assertEqual(filter_tools_for_phase([], "spec"), [])
 
 
 if __name__ == "__main__":

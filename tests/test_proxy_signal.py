@@ -730,13 +730,11 @@ class TestBuildBanner:
     def test_directive_from_phase_map(self, tmp_path: Path) -> None:
         from agentalloy.api.proxy_signal import build_banner
 
-        # A known SDD phase uses its hand-tuned MUST directive; no artifact yet → no
-        # progress suffix.
+        # A known SDD phase uses the generic banner directive (the full MUST-text
+        # lives in the system prompt via `phase_directive` instead); no artifact
+        # yet → no progress suffix.
         banner = build_banner("spec", _gates_with_sections(), tmp_path)
-        assert banner == (
-            "[agentalloy · spec] MUST write docs/spec/<slug>.md "
-            "(Acceptance Criteria + Out of Scope) before designing or coding"
-        )
+        assert banner == "[agentalloy · spec] Review system prompt for phase instructions"
 
     def test_unknown_phase_falls_back_to_gate_path(self, tmp_path: Path) -> None:
         from agentalloy.api.proxy_signal import build_banner
@@ -826,18 +824,54 @@ class TestBuildBanner:
         banner2 = build_banner("design", _design_gates(), tmp_path, slug="feat")
         assert "build contracts" not in banner2
 
-    def test_slug_resolved_in_directive(self, tmp_path: Path) -> None:
+    def test_banner_directive_has_no_slug_placeholder(self, tmp_path: Path) -> None:
         from agentalloy.api.proxy_signal import build_banner
 
+        # The generic banner directive carries no `<slug>` placeholder to resolve —
+        # slug substitution only matters for `phase_directive`'s full MUST-text
+        # (see TestPhaseDirective below). Passing a slug is a harmless no-op here.
         banner = build_banner("design", _design_gates(), tmp_path, slug="calendar-web-ui")
-        assert "docs/design/calendar-web-ui/" in banner
+        assert "Review system prompt for phase instructions" in banner
         assert "<slug>" not in banner
+        assert "calendar-web-ui" not in banner
 
-    def test_slug_left_literal_when_unknown(self, tmp_path: Path) -> None:
-        from agentalloy.api.proxy_signal import build_banner
 
-        banner = build_banner("design", _design_gates(), tmp_path)
-        assert "<slug>" in banner
+class TestPhaseDirective:
+    """`phase_directive` returns the full per-phase MUST-text, slug-resolved."""
+
+    def test_known_phase_returns_full_directive(self) -> None:
+        from agentalloy.api.proxy_signal import phase_directive
+
+        directive = phase_directive("spec", _gates_with_sections())
+        assert directive == (
+            "MUST write docs/spec/<slug>.md (Acceptance Criteria + Out of Scope) "
+            "before designing or coding"
+        )
+
+    def test_slug_resolved_in_directive(self) -> None:
+        from agentalloy.api.proxy_signal import phase_directive
+
+        directive = phase_directive("design", _design_gates(), slug="calendar-web-ui")
+        assert "docs/design/calendar-web-ui/" in directive
+        assert "<slug>" not in directive
+
+    def test_slug_left_literal_when_unknown(self) -> None:
+        from agentalloy.api.proxy_signal import phase_directive
+
+        directive = phase_directive("design", _design_gates())
+        assert "<slug>" in directive
+
+    def test_unknown_phase_falls_back_to_gate_path(self) -> None:
+        from agentalloy.api.proxy_signal import phase_directive
+
+        directive = phase_directive("mystery", {"artifact_exists": {"path": "out.md"}})
+        assert directive == "MUST produce out.md before advancing"
+
+    def test_unknown_phase_no_path_falls_back_to_satisfy_gate(self) -> None:
+        from agentalloy.api.proxy_signal import phase_directive
+
+        directive = phase_directive("mystery", {})
+        assert directive == "MUST satisfy the mystery exit gate before advancing"
 
 
 class TestEvaluateSignalBanner:

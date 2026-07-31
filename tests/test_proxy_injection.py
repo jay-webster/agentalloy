@@ -16,10 +16,14 @@ from agentalloy.api.proxy_injection import (
     BANNER_MARKER_END,
     SYSTEM_MARKER_BEGIN,
     SYSTEM_MARKER_END,
+    SYSTEM_PROMPT_MARKER_END,
     anthropic_has_marker,
     anthropic_marker_begin,
     inject_into_anthropic_messages,
+    inject_into_anthropic_system_prompt,
     inject_into_openai_messages,
+    inject_into_openai_system_prompt,
+    system_prompt_marker_begin,
 )
 from agentalloy.api.proxy_models import ProxyMessage
 
@@ -577,3 +581,132 @@ class TestOpenAIBannerInjection:
     def test_banner_none_content_returns_none(self) -> None:
         messages = [ProxyMessage(role="user", content=None)]
         assert inject_into_openai_messages(messages, BANNER_1, phase="build", kind="banner") is None
+
+
+DIRECTIVE = "MUST write docs/design/<slug>/{approach,tasks,test-plan}.md before any src/ code"
+
+
+class TestAnthropicSystemPromptInjection:
+    """Injects into the top-level Anthropic ``system`` field (not the last user
+    message, and not the existing ``kind="system"`` marker family)."""
+
+    def test_injects_when_system_absent(self) -> None:
+        payload: dict[str, Any] = {"model": "claude", "system": None}
+        result = inject_into_anthropic_system_prompt(payload, DIRECTIVE, phase="design")
+
+        assert result is not payload
+        assert isinstance(result["system"], str)
+        assert system_prompt_marker_begin("design") in result["system"]
+        assert SYSTEM_PROMPT_MARKER_END in result["system"]
+        assert DIRECTIVE in result["system"]
+
+    def test_injects_string_system_preserving_existing_text(self) -> None:
+        payload = {"system": "You are a helpful assistant."}
+        result = inject_into_anthropic_system_prompt(payload, DIRECTIVE, phase="design")
+
+        assert result is not payload
+        assert "You are a helpful assistant." in result["system"]
+        assert DIRECTIVE in result["system"]
+        assert payload["system"] == "You are a helpful assistant."
+
+    def test_injects_list_system_appending_text_block(self) -> None:
+        payload = {"system": [{"type": "text", "text": "base prompt"}]}
+        result = inject_into_anthropic_system_prompt(payload, DIRECTIVE, phase="design")
+
+        assert result is not payload
+        blocks = result["system"]
+        assert {"type": "text", "text": "base prompt"} in blocks
+        joined = "\n".join(b["text"] for b in blocks if b.get("type") == "text")
+        assert DIRECTIVE in joined
+        assert payload["system"] == [{"type": "text", "text": "base prompt"}]
+
+    def test_idempotent_same_phase(self) -> None:
+        payload: dict[str, Any] = {"system": None}
+        once = inject_into_anthropic_system_prompt(payload, DIRECTIVE, phase="design")
+        twice = inject_into_anthropic_system_prompt(once, DIRECTIVE, phase="design")
+
+        assert twice is once
+        assert once["system"].count(system_prompt_marker_begin("design")) == 1
+
+    def test_stale_phase_replaced_on_phase_change(self) -> None:
+        payload: dict[str, Any] = {"system": None}
+        spec = inject_into_anthropic_system_prompt(payload, "spec directive", phase="spec")
+        design = inject_into_anthropic_system_prompt(spec, DIRECTIVE, phase="design")
+
+        assert design is not spec
+        assert system_prompt_marker_begin("spec") not in design["system"]
+        assert "spec directive" not in design["system"]
+        assert system_prompt_marker_begin("design") in design["system"]
+        assert DIRECTIVE in design["system"]
+
+    def test_does_not_touch_kind_system_marker_family(self) -> None:
+        payload = {"system": f"{SYSTEM_MARKER_BEGIN}\nonce-per-session\n{SYSTEM_MARKER_END}"}
+        result = inject_into_anthropic_system_prompt(payload, DIRECTIVE, phase="design")
+
+        assert SYSTEM_MARKER_BEGIN in result["system"]
+        assert "once-per-session" in result["system"]
+        assert DIRECTIVE in result["system"]
+
+    def test_unexpected_system_shape_returns_unchanged(self) -> None:
+        payload = {"system": 42}
+        assert inject_into_anthropic_system_prompt(payload, DIRECTIVE, phase="design") is payload
+
+
+class TestOpenAISystemPromptInjection:
+    """OpenAI-surface sibling: injects into the leading ``role="system"`` message."""
+
+    def test_injects_into_leading_system_message_string(self) -> None:
+        messages = [
+            ProxyMessage(role="system", content="You are a helpful assistant."),
+            ProxyMessage(role="user", content="hi"),
+        ]
+        result = inject_into_openai_system_prompt(messages, DIRECTIVE, phase="design")
+
+        assert result is not None
+        assert "You are a helpful assistant." in result[0].content
+        assert DIRECTIVE in result[0].content
+        assert system_prompt_marker_begin("design") in result[0].content
+        # user message untouched, original list not mutated.
+        assert result[1].content == "hi"
+        assert messages[0].content == "You are a helpful assistant."
+
+    def test_injects_into_leading_system_message_list(self) -> None:
+        messages = [
+            ProxyMessage(role="system", content=[{"type": "text", "text": "base"}]),
+            ProxyMessage(role="user", content="hi"),
+        ]
+        result = inject_into_openai_system_prompt(messages, DIRECTIVE, phase="design")
+
+        assert result is not None
+        content = result[0].content
+        assert {"type": "text", "text": "base"} in content
+        joined = "\n".join(b["text"] for b in content if b.get("type") == "text")
+        assert DIRECTIVE in joined
+
+    def test_no_system_message_returns_none(self) -> None:
+        messages = [ProxyMessage(role="user", content="hi")]
+        assert inject_into_openai_system_prompt(messages, DIRECTIVE, phase="design") is None
+
+    def test_idempotent_same_phase(self) -> None:
+        messages = [ProxyMessage(role="system", content="base")]
+        once = inject_into_openai_system_prompt(messages, DIRECTIVE, phase="design")
+        assert once is not None
+        twice = inject_into_openai_system_prompt(once, DIRECTIVE, phase="design")
+        assert twice is None
+
+    def test_stale_phase_replaced_on_phase_change(self) -> None:
+        messages = [ProxyMessage(role="system", content="base")]
+        spec = inject_into_openai_system_prompt(messages, "spec directive", phase="spec")
+        assert spec is not None
+        design = inject_into_openai_system_prompt(spec, DIRECTIVE, phase="design")
+
+        assert design is not None
+        content = design[0].content
+        assert system_prompt_marker_begin("spec") not in content
+        assert "spec directive" not in content
+        assert system_prompt_marker_begin("design") in content
+        assert DIRECTIVE in content
+
+    def test_unexpected_content_shape_returns_none(self) -> None:
+        messages = [ProxyMessage(role="system", content=None)]
+        assert inject_into_openai_system_prompt(messages, DIRECTIVE, phase="design") is None

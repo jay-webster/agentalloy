@@ -476,8 +476,10 @@ class TestOpenAISurfaceFreeFlow:
         assert "DOMAIN-SKILL-PROSE" in joined
         for needle in _STEERING_NEEDLES:
             assert needle not in joined
-        # System message untouched.
-        assert forwarded["messages"][0]["content"] == "SYSTEM-CACHED"
+        # System message's cached prefix preserved; phase directive appended additively.
+        system_content = forwarded["messages"][0]["content"]
+        assert system_content.startswith("SYSTEM-CACHED")
+        assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in system_content
         rows = store.query_traces()
         store.close()
         assert len(rows) == 1

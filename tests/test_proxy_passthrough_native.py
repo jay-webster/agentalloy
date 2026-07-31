@@ -202,7 +202,7 @@ def test_tc1_query_string_preserved(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_inject_into_last_user_message_system_untouched(tmp_path: Path) -> None:
+def test_inject_into_last_user_message_and_system_prompt(tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
     app = _make_app(captured, orchestrator=_orchestrator("INJECTED-PROSE"))
     # announce=True: an entry turn emits the orchestrator orientation block.
@@ -211,8 +211,10 @@ def test_inject_into_last_user_message_system_untouched(tmp_path: Path) -> None:
         resp = client.post(f"/proj/{_token(tmp_path)}/v1/messages", json=_anthropic_body())
     assert resp.status_code == 200
     sent = json.loads(captured["body"])
-    # system block byte-unchanged (prompt-cache safe)
-    assert sent["system"] == "SYSTEM-CACHED-BLOCK"
+    # system block's cached prefix is preserved byte-for-byte (prompt-cache safe);
+    # the phase directive is appended additively via the system-prompt-field injector.
+    assert sent["system"].startswith("SYSTEM-CACHED-BLOCK")
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in sent["system"]
     # injected into the LAST user message, phase-stamped
     last_user = sent["messages"][-1]
     assert last_user["role"] == "user"
@@ -349,8 +351,13 @@ def test_announce_marker_not_committed_when_compose_degrades(tmp_path: Path) -> 
     with patch(_SIGNAL, return_value=signal), TestClient(app) as client:
         resp = client.post(f"/proj/{_token(tmp_path)}/v1/messages", json=_anthropic_body())
     assert resp.status_code == 200
-    # Original body forwarded unchanged AND the marker is NOT burned → re-announces.
-    assert json.loads(captured["body"]) == _anthropic_body()
+    # Messages forwarded unchanged (no workflow block to inject) AND the marker is
+    # NOT burned → re-announces. The system-prompt-field injector still fires
+    # independently since it's keyed only on phase, not on compose success.
+    sent = json.loads(captured["body"])
+    assert sent["messages"] == _anthropic_body()["messages"]
+    assert sent["system"].startswith("SYSTEM-CACHED-BLOCK")
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in sent["system"]
     assert _announced_file(tmp_path) is None
 
 
@@ -444,8 +451,9 @@ def test_banner_only_turn_injects_into_last_user(tmp_path: Path) -> None:
     # No workflow composition happened.
     assert "SHOULD-NOT-APPEAR" not in last_user["content"]
     assert "phase=build" not in last_user["content"]
-    # System block byte-identical.
-    assert sent["system"] == "SYSTEM-CACHED-BLOCK"
+    # System block's cached prefix preserved; phase directive appended additively.
+    assert sent["system"].startswith("SYSTEM-CACHED-BLOCK")
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in sent["system"]
 
 
 def test_banner_appended_after_workflow_block(tmp_path: Path) -> None:
@@ -470,8 +478,9 @@ def test_banner_appended_after_workflow_block(tmp_path: Path) -> None:
     assert _BANNER in content
     assert content.rstrip().endswith("<!-- END AGENTALLOY-BANNER -->")
     assert content.count("BEGIN AGENTALLOY-BANNER") == 1
-    # System untouched.
-    assert sent["system"] == "SYSTEM-CACHED-BLOCK"
+    # System block's cached prefix preserved; phase directive appended additively.
+    assert sent["system"].startswith("SYSTEM-CACHED-BLOCK")
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in sent["system"]
 
 
 def test_announce_marker_not_committed_when_no_user_message_to_inject(tmp_path: Path) -> None:
@@ -500,8 +509,14 @@ def test_announce_marker_not_committed_when_no_user_message_to_inject(tmp_path: 
     with patch(_SIGNAL, return_value=signal), TestClient(app) as client:
         resp = client.post(f"/proj/{_token(tmp_path)}/v1/messages", json=body)
     assert resp.status_code == 200
-    # Body forwarded unchanged (nothing injected) AND the marker is NOT burned.
-    assert json.loads(captured["body"]) == body
+    sent = json.loads(captured["body"])
+    # Messages forwarded unchanged (nothing to inject there) AND the marker is NOT
+    # burned. The system-prompt-field injector still fires independently since
+    # it's keyed only on phase, not on whether the message-level injector found
+    # a target.
+    assert sent["messages"] == body["messages"]
+    assert sent["system"].startswith("SYSTEM-CACHED-BLOCK")
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in sent["system"]
     assert _announced_file(tmp_path) is None
 
 
