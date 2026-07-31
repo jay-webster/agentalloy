@@ -33,12 +33,16 @@ from agentalloy.api.proxy_context import (
     read_upstream,
     resolve_working_dir,
 )
-from agentalloy.api.proxy_injection import inject_into_openai_messages
+from agentalloy.api.proxy_injection import (
+    inject_into_openai_messages,
+    inject_into_openai_system_prompt,
+)
 from agentalloy.api.proxy_models import ProxyRequest
 from agentalloy.api.proxy_session import extract_session_header, resolve_session_key
-from agentalloy.api.proxy_signal import evaluate_signal
+from agentalloy.api.proxy_signal import evaluate_signal, phase_directive
 from agentalloy.api.proxy_telemetry import write_proxy_trace
 from agentalloy.api.upstream.error_sse import error_sse_plain
+from agentalloy.providers.base import filter_tools_for_phase
 
 if TYPE_CHECKING:
     from agentalloy.config import Settings as AppSettings
@@ -568,6 +572,30 @@ async def proxy_chat_completions(
         except Exception:
             logger.warning("Banner injection failed -- skipping banner", exc_info=True)
 
+    # System-prompt-field directive — additive alongside the user-message
+    # injectors above, so the phase directive reaches the model via the
+    # (prompt-cache-sensitive) system prompt too, not only the last user
+    # message. Fires on EVERY turn with a known phase — unlike the banner
+    # above, NOT gated on the banner's turn cadence, since the whole point is
+    # that the system prompt carries the full directive on the very next turn
+    # without waiting for a banner tick. The injector is idempotent per phase,
+    # so a repeat call on a non-cadence turn is a cheap no-op.
+    if signal_result is not None and signal_result.phase is not None:
+        try:
+            slug = (
+                Path(signal_result.current_contract).stem
+                if signal_result.current_contract
+                else None
+            )
+            directive = phase_directive(signal_result.phase, {}, slug)
+            new_msgs = inject_into_openai_system_prompt(
+                current.messages, directive, phase=signal_result.phase
+            )
+            if new_msgs is not None:
+                current = current.model_copy(update={"messages": new_msgs})
+        except Exception:
+            logger.warning("System-prompt injection failed -- skipping directive", exc_info=True)
+
     modified_request = current
 
     # Carry the phase-gate embed-failure flag into every telemetry write below
@@ -583,6 +611,11 @@ async def proxy_chat_completions(
             commit_outcome(cwd, inject_outcome, upstream_ok=200 <= status < 300)
 
     # --- Step 5: Forward to upstream ---
+    if modified_request.tools is not None:
+        filtered_tools = filter_tools_for_phase(modified_request.tools, phase)
+        if filtered_tools is not modified_request.tools:
+            modified_request = modified_request.model_copy(update={"tools": filtered_tools})
+
     try:
         payload = _build_payload(modified_request, upstream_model)
     except ValueError as e:

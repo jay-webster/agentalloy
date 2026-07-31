@@ -223,11 +223,13 @@ def _resolve_current_contract(
     return cid, path
 
 
-# Per-phase banner directive — the imperative core of the per-turn recency banner,
-# keyed by SDD phase. Hand-tuned here because the pack corpus loads through a DuckDB
-# schema that carries no banner column; the gate-path derivation below is the fallback
-# for an unrecognized phase. Mirrors the MUST/MUST-NOT framing of each phase's orientation.
-_PHASE_BANNER_DIRECTIVE: dict[str, str] = {
+# Per-phase directive — the imperative core of :func:`phase_directive`, keyed by SDD
+# phase. Hand-tuned here because the pack corpus loads through a DuckDB schema that
+# carries no directive column; the gate-path derivation in `phase_directive` is the
+# fallback for an unrecognized phase. Mirrors the MUST/MUST-NOT framing of each phase's
+# orientation. This is the source the system-prompt-field injectors rely on to carry
+# the full directive every turn — see `phase_directive`.
+_PHASE_FULL_DIRECTIVE: dict[str, str] = {
     "intake": "MUST capture the request as a contract (.agentalloy/contracts/) before any spec, design, or code",
     "spec": "MUST write docs/spec/<slug>.md (Acceptance Criteria + Out of Scope) before designing or coding",
     "design": "MUST write docs/design/<slug>/{approach,tasks,test-plan}.md before any src/ code",
@@ -235,6 +237,22 @@ _PHASE_BANNER_DIRECTIVE: dict[str, str] = {
     "qa": "MUST record docs/qa/<slug>.md (Checks + Review) before shipping",
     "ship": "MUST write docs/ship/<slug>.md (Summary + Rollback); ship only what QA approved",
     "sdd-fast": "MUST write docs/fast/<slug>.md (Acceptance + Approach + Test Cases) and pass tests before ship",
+}
+
+# Per-phase banner directive — deliberately generic. Once `phase_directive` reliably
+# lands the full MUST-directive in the system prompt every turn (see
+# `inject_into_anthropic_system_prompt`/`inject_into_openai_system_prompt`), the
+# *banner* is just a periodic recency nudge pointing back at it, not a second copy of
+# the full text. Keyed by phase (not a single constant) so an unrecognized phase still
+# falls through to the gate-path derivation below, same as `phase_directive`.
+_PHASE_BANNER_DIRECTIVE: dict[str, str] = {
+    "intake": "Review system prompt for phase instructions",
+    "spec": "Review system prompt for phase instructions",
+    "design": "Review system prompt for phase instructions",
+    "build": "Review system prompt for phase instructions",
+    "qa": "Review system prompt for phase instructions",
+    "ship": "Review system prompt for phase instructions",
+    "sdd-fast": "Review system prompt for phase instructions",
 }
 
 
@@ -268,6 +286,43 @@ def _checkpoint_label(path_glob: str) -> str:
     return parent or path_glob
 
 
+def _fallback_directive(phase: str, exit_gates: dict[str, Any]) -> str:
+    """Gate-derived directive text for a phase absent from a hand-tuned dict.
+
+    ``MUST produce {artifact} before advancing`` (first gate ``path`` via
+    :func:`_extract_gate_paths`), or ``MUST satisfy the {phase} exit gate before
+    advancing`` when no gate path can be extracted. Shared by :func:`phase_directive`
+    and :func:`build_banner` so an unrecognized phase degrades the same way in both.
+    """
+    try:
+        paths = _extract_gate_paths(exit_gates)
+    except Exception:
+        paths = []
+    return (
+        f"MUST produce {paths[0]} before advancing"
+        if paths
+        else f"MUST satisfy the {phase} exit gate before advancing"
+    )
+
+
+def phase_directive(phase: str, exit_gates: dict[str, Any], slug: str | None = None) -> str:
+    """The full per-phase MUST-directive text, independent of the banner cadence.
+
+    The hand-tuned :data:`_PHASE_FULL_DIRECTIVE` entry for *phase*, falling back to
+    :func:`_fallback_directive` for an unrecognized phase. When *slug* is known, the
+    literal ``<slug>`` placeholder is resolved so the path is copy-paste-able.
+
+    Unlike :func:`build_banner`, this carries no progress/checkpoint suffix and
+    is not gated on the banner's turn cadence — callers that need the full
+    directive on every turn (e.g. the system-prompt-field injectors) should use
+    this instead of ``build_banner``'s composite string.
+    """
+    directive = _PHASE_FULL_DIRECTIVE.get(phase) or _fallback_directive(phase, exit_gates)
+    if slug:
+        directive = directive.replace("<slug>", slug)
+    return directive
+
+
 def build_banner(
     phase: str,
     exit_gates: dict[str, Any],
@@ -278,11 +333,10 @@ def build_banner(
 
     Format: ``[agentalloy · {phase}] {directive}{progress}{checkpoint}``.
 
-    - **directive**: the hand-tuned :data:`_PHASE_BANNER_DIRECTIVE` entry for the phase;
-      for an unrecognized phase, the fallback ``MUST produce {artifact} before advancing``
-      (first gate ``path`` via :func:`_extract_gate_paths`), or ``MUST satisfy the {phase}
-      exit gate before advancing``. When *slug* is known, the literal ``<slug>`` placeholder
-      is resolved so the path is copy-paste-able.
+    - **directive**: the generic :data:`_PHASE_BANNER_DIRECTIVE` entry for *phase*
+      (the full MUST-text lives in the system prompt via :func:`phase_directive`
+      instead — the banner just points back at it), falling back to
+      :func:`_fallback_directive` for an unrecognized phase.
     - **progress**: appended once at least one target artifact exists —
       `` · {present}/{total} sections (missing: a, b, c)``. Scored PER GATE
       (:func:`_extract_artifact_contains_specs`): each required heading is checked against
@@ -294,17 +348,7 @@ def build_banner(
     Cheap and soft: all derivation is wrapped so a malformed gate or unreadable artifact
     yields a best-effort banner rather than raising.
     """
-    directive = _PHASE_BANNER_DIRECTIVE.get(phase)
-    if directive is None:
-        try:
-            paths = _extract_gate_paths(exit_gates)
-        except Exception:
-            paths = []
-        directive = (
-            f"MUST produce {paths[0]} before advancing"
-            if paths
-            else f"MUST satisfy the {phase} exit gate before advancing"
-        )
+    directive = _PHASE_BANNER_DIRECTIVE.get(phase) or _fallback_directive(phase, exit_gates)
     if slug:
         directive = directive.replace("<slug>", slug)
 

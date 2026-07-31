@@ -26,6 +26,11 @@ BANNER_MARKER_BEGIN / BANNER_MARKER_END
     (``kind="banner"``: strip-and-replaced every carrier turn).
 anthropic_has_marker
     Cadence helper: is a matching marker already present in a payload?
+inject_into_anthropic_system_prompt / inject_into_openai_system_prompt
+    Inject into the actual system-prompt field (Anthropic's top-level
+    ``system`` param / OpenAI's leading ``role="system"`` message) rather than
+    the last user message — a distinct surface from everything above, with its
+    own phase-stamped marker family so it can be replaced on phase change.
 """
 
 from __future__ import annotations
@@ -275,6 +280,98 @@ def inject_into_anthropic_messages(
 
 
 # ---------------------------------------------------------------------------
+# System-prompt-field injection (both surfaces)
+#
+# Distinct from every injector above: those all land their block inside the
+# LAST user message, deliberately leaving the top-level system prompt
+# byte-identical for caching. These two operate on the ACTUAL system-prompt
+# field instead — Anthropic's top-level ``system`` param, and OpenAI's leading
+# ``role == "system"`` message — so the phase directive is guaranteed present
+# every turn without depending on a user message existing. They use their own
+# phase-stamped marker family (below), not ``anthropic_marker_begin`` (the
+# user-message workflow family) and not ``SYSTEM_MARKER_BEGIN`` (the
+# once-per-session "system" kind injected into a user message), so none of the
+# three collide.
+#
+# No Responses-surface (payload["input"]) sibling is provided here — out of
+# scope for this port.
+# ---------------------------------------------------------------------------
+
+
+def system_prompt_marker_begin(phase: str) -> str:
+    """Phase-stamped opening marker for a system-prompt-field block."""
+    return f"<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase={phase} -->"
+
+
+SYSTEM_PROMPT_MARKER_END = "<!-- END AGENTALLOY-SYSTEM-PROMPT -->"
+
+_SYSTEM_PROMPT_BEGIN_PREFIX = "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase="
+_SYSTEM_PROMPT_BEGIN_SUFFIX = " -->"
+
+
+def _system_prompt_begin_any() -> str:
+    """Marker-begin prefix shared by every system-prompt-field phase."""
+    return _SYSTEM_PROMPT_BEGIN_PREFIX
+
+
+def _find_system_prompt_marker_phase(text: str) -> str | None:
+    """Return the phase of the first system-prompt-field marker in *text*, or None."""
+    start = text.find(_SYSTEM_PROMPT_BEGIN_PREFIX)
+    if start == -1:
+        return None
+    value_start = start + len(_SYSTEM_PROMPT_BEGIN_PREFIX)
+    value_end = text.find(_SYSTEM_PROMPT_BEGIN_SUFFIX, value_start)
+    if value_end == -1:
+        return None
+    return text[value_start:value_end]
+
+
+def _strip_system_prompt_block(text: str) -> str:
+    """Remove any system-prompt-field block (regardless of phase) from *text*."""
+    phase = _find_system_prompt_marker_phase(text)
+    if phase is None:
+        return text
+    return _strip_block(text, system_prompt_marker_begin(phase), SYSTEM_PROMPT_MARKER_END)
+
+
+def inject_into_anthropic_system_prompt(
+    payload: dict[str, Any], text: str, *, phase: str
+) -> dict[str, Any]:
+    """Inject *text* into the top-level Anthropic ``system`` field.
+
+    Handles ``payload["system"]`` absent, a bare string, or a content-block
+    list. Idempotent for the current phase (returns *payload* unchanged); a
+    stale block for a different phase is stripped before injecting. Returns a
+    NEW payload on a real injection and the SAME object on every no-op.
+    """
+    begin, end = system_prompt_marker_begin(phase), SYSTEM_PROMPT_MARKER_END
+    system = payload.get("system")
+    new_system: str | list[dict[str, Any]]
+
+    if system is None:
+        new_system = _block_text(begin, text, end)
+    elif isinstance(system, str):
+        if begin in system:
+            return payload
+        stripped = _strip_system_prompt_block(system)
+        new_block = _block_text(begin, text, end)
+        new_system = f"{stripped}\n\n{new_block}" if stripped else new_block
+    elif isinstance(system, list):
+        raw_blocks = cast("list[Any]", system)
+        blocks: list[dict[str, Any]] = [d for b in raw_blocks if (d := _as_dict(b)) is not None]
+        if any(_text_block_contains(b, begin) for b in blocks):
+            return payload
+        blocks = [b for b in blocks if not _text_block_contains(b, _system_prompt_begin_any())]
+        new_block = _block_text(begin, text, end)
+        new_system = [*blocks, {"type": "text", "text": new_block}]
+    else:
+        # Unexpected shape -- leave the payload untouched.
+        return payload
+
+    return {**payload, "system": new_system}
+
+
+# ---------------------------------------------------------------------------
 # OpenAI Responses surface (payload["input"] — codex et al.)
 #
 # A Responses user turn is {"type": "message", "role": "user", "content":
@@ -485,6 +582,64 @@ def inject_into_openai_messages(
         new_content = [*blocks, {"type": "text", "text": new_block}]
     else:
         # Unexpected content shape (e.g. None) -- leave the list untouched.
+        return None
+
+    new_messages = list(messages)
+    new_messages[idx] = target.model_copy(update={"content": new_content})
+    return new_messages
+
+
+def _leading_system_message_index(messages: list[ProxyMessage]) -> int | None:
+    """Index of the FIRST ``role == "system"`` message, or None."""
+    for i, m in enumerate(messages):
+        if m.role == "system":
+            return i
+    return None
+
+
+def inject_into_openai_system_prompt(
+    messages: list[ProxyMessage], text: str, *, phase: str
+) -> list[ProxyMessage] | None:
+    """Inject *text* into the leading ``role == "system"`` message.
+
+    The OpenAI-surface sibling of :func:`inject_into_anthropic_system_prompt`:
+    same phase-stamped system-prompt-field marker family, operating on the
+    FIRST ``role == "system"`` message (OpenAI's system prompt is a leading
+    message, not a top-level field). No system message is synthesized when
+    none exists — the phase directive still reaches the model via the
+    existing message-level injectors.
+
+    Returns a NEW list with only the target system message replaced, or
+    ``None`` on every no-op:
+
+    - no ``role == "system"`` message,
+    - the target already carries the current-phase begin marker (idempotent),
+    - an unexpected content shape.
+    """
+    idx = _leading_system_message_index(messages)
+    if idx is None:
+        return None
+
+    begin, end = system_prompt_marker_begin(phase), SYSTEM_PROMPT_MARKER_END
+    target = messages[idx]
+    content = target.content
+
+    if isinstance(content, str):
+        if begin in content:
+            return None
+        stripped = _strip_system_prompt_block(content)
+        new_block = _block_text(begin, text, end)
+        new_content: str | list[dict[str, Any]] = (
+            f"{stripped}\n\n{new_block}" if stripped else new_block
+        )
+    elif isinstance(content, list):
+        blocks = content
+        if any(_text_block_contains(b, begin) for b in blocks):
+            return None
+        blocks = [b for b in blocks if not _text_block_contains(b, _system_prompt_begin_any())]
+        new_block = _block_text(begin, text, end)
+        new_content = [*blocks, {"type": "text", "text": new_block}]
+    else:
         return None
 
     new_messages = list(messages)

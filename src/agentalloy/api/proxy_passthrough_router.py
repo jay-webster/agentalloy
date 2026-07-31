@@ -36,7 +36,10 @@ from agentalloy.api.proxy_apply import (
     commit_outcome,
 )
 from agentalloy.api.proxy_context import decode_proj_token
-from agentalloy.api.proxy_injection import inject_into_anthropic_messages
+from agentalloy.api.proxy_injection import (
+    inject_into_anthropic_messages,
+    inject_into_anthropic_system_prompt,
+)
 from agentalloy.api.proxy_models import ProxyMessage, ProxyRequest
 from agentalloy.api.proxy_router import (
     get_embed_client,
@@ -44,8 +47,9 @@ from agentalloy.api.proxy_router import (
     get_vector_store,
 )
 from agentalloy.api.proxy_session import extract_session_header
-from agentalloy.api.proxy_signal import SignalResult, evaluate_signal
+from agentalloy.api.proxy_signal import SignalResult, evaluate_signal, phase_directive
 from agentalloy.api.proxy_telemetry import write_proxy_trace
+from agentalloy.providers.base import filter_tools_for_phase
 
 if TYPE_CHECKING:
     from agentalloy.embed_provider import EmbedClient
@@ -240,6 +244,13 @@ async def _maybe_inject(
     current = payload
     outcome: InjectOutcome[dict[str, Any]] | None = None
 
+    # 0. Tool gating — drop disk-writing tools while the phase is discussion-only.
+    raw_tools = current.get("tools")
+    if isinstance(raw_tools, list):
+        filtered_tools = filter_tools_for_phase(raw_tools, signal.phase)
+        if filtered_tools is not raw_tools:
+            current = {**current, "tools": filtered_tools}
+
     # 1. Workflow/cursor block via the shared seam (cadence-marker committing).
     if signal.should_compose and signal.phase and orchestrator is not None:
         # Cadence lives in `.agentalloy/{announced,composed}` (durable), not in the
@@ -276,6 +287,23 @@ async def _maybe_inject(
         )
         if bannered is not current:
             current = bannered
+
+    # 3. System-prompt-field directive — additive alongside the user-message
+    #    injectors above, so the phase directive reaches the model via the
+    #    (prompt-cache-sensitive) system prompt too, not only the last user
+    #    message. Fires on EVERY turn with a known phase — unlike the banner
+    #    above, this is NOT gated on the banner's turn cadence, since the whole
+    #    point is that the system prompt carries the full directive on the very
+    #    next turn without waiting for a banner tick. `phase_directive` is the
+    #    bare per-phase text (no progress/checkpoint suffix); the injector
+    #    itself is idempotent per phase, so a repeat call on a non-cadence turn
+    #    is a cheap no-op.
+    if signal.phase is not None:
+        slug = Path(signal.current_contract).stem if signal.current_contract else None
+        directive = phase_directive(signal.phase, {}, slug)
+        prompted = inject_into_anthropic_system_prompt(current, directive, phase=signal.phase)
+        if prompted is not current:
+            current = prompted
 
     injected_payload = current if current is not payload else None
     return injected_payload, outcome, signal

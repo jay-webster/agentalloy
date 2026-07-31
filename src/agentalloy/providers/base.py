@@ -191,6 +191,41 @@ class WireRecord:
         return hashlib.sha256(content.encode()).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Phase-gated tool filtering
+# ---------------------------------------------------------------------------
+
+# Tools that let a harness write to disk — gated out during phases that are
+# meant to be discussion/planning only (no code changes yet).
+GATED_TOOL_NAMES = frozenset({"write_file", "edit", "notebook_edit"})
+
+# Phases where GATED_TOOL_NAMES must not reach the model.
+DENIED_PHASES = frozenset({"intake", "spec", "design"})
+
+
+def _tool_name(tool: dict[str, Any]) -> str:
+    """Extract a tool's name from either wire shape.
+
+    Anthropic tools are flat (``{"name": ...}``); OpenAI tools nest the name
+    under ``{"type": "function", "function": {"name": ...}}``.
+    """
+    function = tool.get("function")
+    name = function.get("name") if isinstance(function, dict) else tool.get("name")
+    return name if isinstance(name, str) else ""
+
+
+def filter_tools_for_phase(tools: list[dict[str, Any]], phase: str | None) -> list[dict[str, Any]]:
+    """Drop ``GATED_TOOL_NAMES`` from *tools* when *phase* is in ``DENIED_PHASES``.
+
+    Returns *tools* unchanged (same list reference) when nothing is filtered,
+    so callers can cheaply detect a no-op via identity.
+    """
+    if phase not in DENIED_PHASES:
+        return tools
+    filtered = [t for t in tools if _tool_name(t) not in GATED_TOOL_NAMES]
+    return filtered if len(filtered) != len(tools) else tools
+
+
 def sdd_instructions_markdown(port: int) -> str:
     """Shared SDD instruction block for markdown-delivered harnesses.
 

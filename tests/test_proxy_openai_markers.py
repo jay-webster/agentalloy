@@ -222,9 +222,10 @@ def test_carrier_gate_tools_none_does_not_announce(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # Per-turn phase banner (OpenAI surface).
 # The banner injects on EVERY carrier turn into the last user message of the
-# upstream payload, AFTER any workflow block, leaving the system message
-# byte-identical. It fires even on a banner-only turn (no announce). It must NOT
-# flip `composed` in telemetry.
+# upstream payload, AFTER any workflow block. The leading system message keeps
+# its cached content as a byte-identical prefix; the system-prompt-field
+# injector appends the phase directive additively. It fires even on a
+# banner-only turn (no announce). It must NOT flip `composed` in telemetry.
 # --------------------------------------------------------------------------- #
 
 _BANNER = "[agentalloy · build] MUST produce out.md before advancing · 1/2 sections (missing: B)"
@@ -256,8 +257,10 @@ def test_banner_only_turn_injects_into_upstream_last_user(tmp_path: Path) -> Non
     assert _BANNER in content
     assert "BEGIN AGENTALLOY-BANNER" in content
     assert "SHOULD-NOT-APPEAR" not in content
-    # System message byte-identical.
-    assert _system_content(captured) == "SYSTEM-CACHED"
+    # System message's cached prefix preserved; phase directive appended additively.
+    system_content = _system_content(captured)
+    assert system_content.startswith("SYSTEM-CACHED")
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in system_content
 
 
 def test_banner_appended_after_workflow_block_upstream(tmp_path: Path) -> None:
@@ -283,7 +286,10 @@ def test_banner_appended_after_workflow_block_upstream(tmp_path: Path) -> None:
     assert _BANNER in content
     assert content.rstrip().endswith("<!-- END AGENTALLOY-BANNER -->")
     assert content.count("BEGIN AGENTALLOY-BANNER") == 1
-    # System untouched, and the workflow announce marker still committed (banner is
-    # additive — it doesn't disturb the cadence).
-    assert _system_content(captured) == "SYSTEM-CACHED"
+    # System's cached prefix preserved (phase directive appended additively), and the
+    # workflow announce marker still committed (banner is additive — it doesn't
+    # disturb the cadence).
+    system_content = _system_content(captured)
+    assert system_content.startswith("SYSTEM-CACHED")
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in system_content
     assert _announced_file(tmp_path) == "build\tsess-1"
