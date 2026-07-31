@@ -734,22 +734,20 @@ class TestBuildBanner:
         # lives in the system prompt via `phase_directive` instead); no artifact
         # yet → no progress suffix.
         banner = build_banner("spec", _gates_with_sections(), tmp_path)
-        assert banner == "[agentalloy · spec] Review system prompt for phase instructions"
+        assert banner == "[agentalloy · spec] phase instructions: system prompt"
 
     def test_unknown_phase_falls_back_to_gate_path(self, tmp_path: Path) -> None:
         from agentalloy.api.proxy_signal import build_banner
 
         # An unrecognized phase derives the directive from the first gate path.
         banner = build_banner("mystery", {"artifact_exists": {"path": "out.md"}}, tmp_path)
-        assert banner == "[agentalloy · mystery] MUST produce out.md before advancing"
+        assert banner == "[agentalloy · mystery] out.md not yet produced"
 
     def test_unknown_phase_no_path_falls_back_to_satisfy_gate(self, tmp_path: Path) -> None:
         from agentalloy.api.proxy_signal import build_banner
 
         banner = build_banner("mystery", {}, tmp_path)
-        assert (
-            banner == "[agentalloy · mystery] MUST satisfy the mystery exit gate before advancing"
-        )
+        assert banner == "[agentalloy · mystery] mystery exit gate not yet satisfied"
 
     def test_progress_appended_when_artifact_exists(self, tmp_path: Path) -> None:
         from agentalloy.api.proxy_signal import build_banner
@@ -777,7 +775,7 @@ class TestBuildBanner:
         # Gate has a path but no `sections` → no progress suffix even if file exists.
         (tmp_path / "out.md").write_text("# T\n## Anything\n")
         banner = build_banner("mystery", {"artifact_exists": {"path": "out.md"}}, tmp_path)
-        assert banner == "[agentalloy · mystery] MUST produce out.md before advancing"
+        assert banner == "[agentalloy · mystery] out.md not yet produced"
 
     def _write_design_docs(self, tmp_path: Path, *, slug: str, which: set[str]) -> None:
         d = tmp_path / "docs" / "design" / slug
@@ -831,7 +829,7 @@ class TestBuildBanner:
         # slug substitution only matters for `phase_directive`'s full MUST-text
         # (see TestPhaseDirective below). Passing a slug is a harmless no-op here.
         banner = build_banner("design", _design_gates(), tmp_path, slug="calendar-web-ui")
-        assert "Review system prompt for phase instructions" in banner
+        assert "phase instructions: system prompt" in banner
         assert "<slug>" not in banner
         assert "calendar-web-ui" not in banner
 

@@ -245,14 +245,22 @@ _PHASE_FULL_DIRECTIVE: dict[str, str] = {
 # *banner* is just a periodic recency nudge pointing back at it, not a second copy of
 # the full text. Keyed by phase (not a single constant) so an unrecognized phase still
 # falls through to the gate-path derivation below, same as `phase_directive`.
+#
+# Deliberately phrased as a fact about state ("phase instructions: system prompt"),
+# not a command ("Review..."/"MUST..."). This banner rides in the last USER message,
+# unattributed except for the marker comment — an imperative voice there reads as an
+# unattributed third party issuing orders inside the user's own turn, which is exactly
+# the shape Claude's injected-content defenses are tuned to refuse. State the fact and
+# let the model act on it; don't tell the model what to do from inside content that
+# isn't the user or the system.
 _PHASE_BANNER_DIRECTIVE: dict[str, str] = {
-    "intake": "Review system prompt for phase instructions",
-    "spec": "Review system prompt for phase instructions",
-    "design": "Review system prompt for phase instructions",
-    "build": "Review system prompt for phase instructions",
-    "qa": "Review system prompt for phase instructions",
-    "ship": "Review system prompt for phase instructions",
-    "sdd-fast": "Review system prompt for phase instructions",
+    "intake": "phase instructions: system prompt",
+    "spec": "phase instructions: system prompt",
+    "design": "phase instructions: system prompt",
+    "build": "phase instructions: system prompt",
+    "qa": "phase instructions: system prompt",
+    "ship": "phase instructions: system prompt",
+    "sdd-fast": "phase instructions: system prompt",
 }
 
 
@@ -291,8 +299,9 @@ def _fallback_directive(phase: str, exit_gates: dict[str, Any]) -> str:
 
     ``MUST produce {artifact} before advancing`` (first gate ``path`` via
     :func:`_extract_gate_paths`), or ``MUST satisfy the {phase} exit gate before
-    advancing`` when no gate path can be extracted. Shared by :func:`phase_directive`
-    and :func:`build_banner` so an unrecognized phase degrades the same way in both.
+    advancing`` when no gate path can be extracted. Used by :func:`phase_directive`
+    only — this text lands in the system prompt, where an imperative voice is
+    appropriate (unlike the banner's fallback, see :func:`_fallback_banner_directive`).
     """
     try:
         paths = _extract_gate_paths(exit_gates)
@@ -303,6 +312,21 @@ def _fallback_directive(phase: str, exit_gates: dict[str, Any]) -> str:
         if paths
         else f"MUST satisfy the {phase} exit gate before advancing"
     )
+
+
+def _fallback_banner_directive(phase: str, exit_gates: dict[str, Any]) -> str:
+    """Gate-derived banner text for a phase absent from :data:`_PHASE_BANNER_DIRECTIVE`.
+
+    ``{artifact} not yet produced`` (first gate ``path`` via :func:`_extract_gate_paths`),
+    or ``{phase} exit gate not yet satisfied`` when no gate path can be extracted. Used
+    by :func:`build_banner` only — declarative, since this text rides unattributed in
+    the user's own message (see the comment above :data:`_PHASE_BANNER_DIRECTIVE`).
+    """
+    try:
+        paths = _extract_gate_paths(exit_gates)
+    except Exception:
+        paths = []
+    return f"{paths[0]} not yet produced" if paths else f"{phase} exit gate not yet satisfied"
 
 
 def phase_directive(phase: str, exit_gates: dict[str, Any], slug: str | None = None) -> str:
@@ -333,10 +357,11 @@ def build_banner(
 
     Format: ``[agentalloy · {phase}] {directive}{progress}{checkpoint}``.
 
-    - **directive**: the generic :data:`_PHASE_BANNER_DIRECTIVE` entry for *phase*
-      (the full MUST-text lives in the system prompt via :func:`phase_directive`
-      instead — the banner just points back at it), falling back to
-      :func:`_fallback_directive` for an unrecognized phase.
+    - **directive**: the generic :data:`_PHASE_BANNER_DIRECTIVE` entry for *phase*,
+      phrased as a fact about state rather than a command (see the comment above
+      that table for why); the full MUST-text lives in the system prompt via
+      :func:`phase_directive` instead — the banner just points back at it, falling
+      back to :func:`_fallback_banner_directive` for an unrecognized phase.
     - **progress**: appended once at least one target artifact exists —
       `` · {present}/{total} sections (missing: a, b, c)``. Scored PER GATE
       (:func:`_extract_artifact_contains_specs`): each required heading is checked against
@@ -348,7 +373,7 @@ def build_banner(
     Cheap and soft: all derivation is wrapped so a malformed gate or unreadable artifact
     yields a best-effort banner rather than raising.
     """
-    directive = _PHASE_BANNER_DIRECTIVE.get(phase) or _fallback_directive(phase, exit_gates)
+    directive = _PHASE_BANNER_DIRECTIVE.get(phase) or _fallback_banner_directive(phase, exit_gates)
     if slug:
         directive = directive.replace("<slug>", slug)
 

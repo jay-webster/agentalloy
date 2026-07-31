@@ -432,7 +432,7 @@ def test_announce_marker_not_committed_on_streaming_529(tmp_path: Path) -> None:
 # a banner-only turn (no announce / no workflow block).
 # --------------------------------------------------------------------------- #
 
-_BANNER = "[agentalloy · build] MUST produce out.md before advancing · 1/2 sections (missing: B)"
+_BANNER = "[agentalloy · build] out.md not yet produced · 1/2 sections (missing: B)"
 
 
 def test_banner_only_turn_injects_into_last_user(tmp_path: Path) -> None:
