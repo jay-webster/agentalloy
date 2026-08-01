@@ -1,12 +1,12 @@
 name: performance
-version: 1.0.5
+version: 1.0.6
 tier: foundation
 description: Performance practices that span stacks — measure first, profile correctly, optimize the bottleneck, know when to stop. Always installed.
 author: navistone
 embed_model: nomic-embed-text-v1.5
 embedding_dim: 768
 license: MIT
-homepage: https://github.com/nrmeyers/agentalloy
+homepage: https://github.com/jay-webster/agentalloy
 always_install: true
 depends_on: [core, engineering]
 skills:

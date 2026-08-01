@@ -56,7 +56,7 @@ from agentalloy.install.release_check import parse_semver as _parse_semver
 SCHEMA_VERSION = 1
 STEP_NAME = "upgrade"
 
-_GIT_URL = "https://github.com/nrmeyers/agentalloy.git"
+_GIT_URL = "https://github.com/jay-webster/agentalloy.git"
 # Substrings that mark an embedding-dimension mismatch surfaced by install-packs
 # or the startup guard — the signal that a full re-embed is required.
 _DIM_MISMATCH_MARKERS = ("embedding_dim", "EmbeddingDimMismatch", "-dim embeddings", "dimension")

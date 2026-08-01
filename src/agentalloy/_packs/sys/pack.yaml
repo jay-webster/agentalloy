@@ -1,5 +1,5 @@
 name: sys
-version: 1.2.0
+version: 1.2.1
 tier: foundation
 description: |
   Golden system-capability skills — the org customization surface for the SDD
@@ -12,7 +12,7 @@ author: navistone
 embed_model: nomic-embed-text-v1.5
 embedding_dim: 768
 license: MIT
-homepage: https://github.com/nrmeyers/agentalloy
+homepage: https://github.com/jay-webster/agentalloy
 always_install: true
 depends_on:
 - core

@@ -32,7 +32,7 @@ Most users want exactly this:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install the CLI into PATH so it works from any directory.
-uv tool install git+https://github.com/nrmeyers/agentalloy.git
+uv tool install git+https://github.com/jay-webster/agentalloy.git
 
 # Once per machine — installs everything user-scoped.
 # Will prompt: "Do you want agentalloy to run persistently as a background service?"
@@ -73,7 +73,7 @@ For a proxy-wired harness, point it at your upstream LLM with `--upstream-url` /
 
 The wizard's first question is **how to deploy**; both choices run the same wizard:
 
-- **Container** *(recommended for new installs, default)* — agentalloy + two bundled `llama-server` instances in one image pulled from GHCR (`ghcr.io/nrmeyers/agentalloy:latest`). Zero host dependencies, air-gapped friendly, **CPU-only on every host**. Ships a prebuilt corpus, so first run only waits on the model download; port 47950 is the only external surface. Requires a container runtime — Docker or Podman — that is both **installed and running** (see the runtime probe rules under Step 13); if none is usable, setup tells you to install one and re-run, or — interactively — offers to switch to a Native install on the spot.
+- **Container** *(recommended for new installs, default)* — agentalloy + two bundled `llama-server` instances in one image pulled from GHCR (`ghcr.io/jay-webster/agentalloy:latest`). Zero host dependencies, air-gapped friendly, **CPU-only on every host**. Ships a prebuilt corpus, so first run only waits on the model download; port 47950 is the only external surface. Requires a container runtime — Docker or Podman — that is both **installed and running** (see the runtime probe rules under Step 13); if none is usable, setup tells you to install one and re-run, or — interactively — offers to switch to a Native install on the spot.
 - **Native** — runs the models directly on your host via llama-server with GPU acceleration (NVIDIA CUDA / AMD ROCm / Apple Metal, or CPU if you have no GPU). Fastest composition path, full control.
 
 ---
@@ -171,7 +171,7 @@ If `uv sync` fails:
 
 > RUN
 > ```bash
-> uv tool install git+https://github.com/nrmeyers/agentalloy.git
+> uv tool install git+https://github.com/jay-webster/agentalloy.git
 > ```
 
 This installs the `agentalloy` command into the user's PATH (at `~/.local/bin/agentalloy` or equivalent) so it works from any directory — not just from inside this repo. Required so `agentalloy add`, `agentalloy serve`, and `agentalloy status` work after you `cd` into a project repo.
@@ -179,13 +179,13 @@ This installs the `agentalloy` command into the user's PATH (at `~/.local/bin/ag
 **Contributor note:** If you're developing agentalloy itself, install editable instead:
 
 ```bash
-git clone https://github.com/nrmeyers/agentalloy.git
+git clone https://github.com/jay-webster/agentalloy.git
 cd agentalloy
 uv sync
 uv tool install --editable .
 ```
 
-**Migrating from pipx:** if you previously installed AgentAlloy via `pipx`, run `pipx uninstall agentalloy`, then `uv tool install git+https://github.com/nrmeyers/agentalloy.git`. User-scope state (`~/.config/agentalloy/`, corpus DB) is preserved across the swap — pipx and uv installs share the same state location.
+**Migrating from pipx:** if you previously installed AgentAlloy via `pipx`, run `pipx uninstall agentalloy`, then `uv tool install git+https://github.com/jay-webster/agentalloy.git`. User-scope state (`~/.config/agentalloy/`, corpus DB) is preserved across the swap — pipx and uv installs share the same state location.
 
 Verify it landed by re-running preflight (which is the authoritative PATH check):
 
@@ -482,8 +482,8 @@ The subcommand detects the available service manager (systemd/launchd) or contai
 >
 > | Variant | Size | Model | Use case |
 > |---|---|---|---|
-> | `ghcr.io/nrmeyers/agentalloy:latest` | ~300 MB | Not included | General users with network access. The model is pulled at first container start. |
-> | `ghcr.io/nrmeyers/agentalloy:full` | ~975 MB | Pre-baked GGUFs (`nomic-embed-text-v1.5.Q8_0.gguf` + `Qwen3-Reranker-0.6B-Q8_0.gguf`) | Air-gapped/enterprise environments that need the models baked into the image. |
+> | `ghcr.io/jay-webster/agentalloy:latest` | ~300 MB | Not included | General users with network access. The model is pulled at first container start. |
+> | `ghcr.io/jay-webster/agentalloy:full` | ~975 MB | Pre-baked GGUFs (`nomic-embed-text-v1.5.Q8_0.gguf` + `Qwen3-Reranker-0.6B-Q8_0.gguf`) | Air-gapped/enterprise environments that need the models baked into the image. |
 >
 > **Container deployments require a running container runtime — Docker or Podman.** Setup probes the runtime with `<runtime> info` (not just a PATH check), so a `podman`/`docker` CLI on PATH whose daemon/machine isn't running — e.g. no `podman machine` started (common on macOS), or Docker Desktop stopped — does **not** count as usable. Auto-detection prefers Podman and falls back to Docker; when both work you're prompted to choose. Pass `--runtime {podman,docker}` to select one non-interactively. If you pick Container and no usable runtime is found, setup tells you to install Docker or Podman and re-run setup, or (in interactive mode) offers to switch to a Native install on the spot.
 >
@@ -631,7 +631,7 @@ The image bundles the service and its inference runners — two `llama-server` i
 The setup wizard's container path:
 
 1. **Detects** a usable container runtime — installed *and* running, probed with `<runtime> info` (see the runtime rules under Step 13).
-2. **Pulls** the pre-built image from GHCR (`ghcr.io/nrmeyers/agentalloy:latest`).
+2. **Pulls** the pre-built image from GHCR (`ghcr.io/jay-webster/agentalloy:latest`).
 3. **Creates** a named volume `agentalloy-data` for persistent corpus data.
 4. **Runs** the container with volume mounts, env vars, and port mapping.
 5. **Waits** for the readiness endpoint (`/readiness`) to respond.

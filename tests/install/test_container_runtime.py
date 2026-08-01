@@ -152,12 +152,12 @@ class TestPullImage:
     """UT-2: _pull_image() pulls from GHCR in online mode."""
 
     def test_pulls_from_ghcr_by_default(self):
-        """Default pull uses ghcr.io/nrmeyers/agentalloy:latest."""
+        """Default pull uses ghcr.io/jay-webster/agentalloy:latest."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             container_runtime._pull_image("podman")
             cmd = mock_run.call_args[0][0]
-            assert cmd == ["podman", "pull", "ghcr.io/nrmeyers/agentalloy:latest"]
+            assert cmd == ["podman", "pull", "ghcr.io/jay-webster/agentalloy:latest"]
 
     def test_pulls_custom_image_ref(self):
         """A custom image_ref is passed to the pull command."""
@@ -176,7 +176,7 @@ class TestPullImage:
     def test_returns_nonzero_on_failure(self):
         """Returns non-zero exit code when the pull fails."""
         exc = subprocess.CalledProcessError(
-            1, ["podman", "pull", "ghcr.io/nrmeyers/agentalloy:latest"]
+            1, ["podman", "pull", "ghcr.io/jay-webster/agentalloy:latest"]
         )
         exc.stderr = b"pull error"
 
@@ -198,7 +198,7 @@ class TestPullImage:
         def _subprocess_run(cmd, **kwargs):
             mock = MagicMock()
             mock.returncode = 0
-            mock.stdout = "ghcr.io/nrmeyers/agentalloy:latest\n"
+            mock.stdout = "ghcr.io/jay-webster/agentalloy:latest\n"
             mock.stderr = b""
             return mock
 
@@ -227,7 +227,7 @@ class TestOfflineLoad:
         tarball.write_bytes(b"fake-tarball")
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
-                returncode=0, stdout="ghcr.io/nrmeyers/agentalloy:latest\n"
+                returncode=0, stdout="ghcr.io/jay-webster/agentalloy:latest\n"
             )
             result = container_runtime._pull_image("podman", offline=True, tarball_path=tarball)
             assert result == 0
@@ -281,7 +281,7 @@ class TestPullImageFailureScenarios:
         with patch(
             "subprocess.run",
             side_effect=subprocess.TimeoutExpired(
-                ["podman", "pull", "ghcr.io/nrmeyers/agentalloy:latest"], 600
+                ["podman", "pull", "ghcr.io/jay-webster/agentalloy:latest"], 600
             ),
         ):
             result = container_runtime._pull_image("podman")
@@ -300,18 +300,18 @@ class TestPullImageFailureScenarios:
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             container_runtime._pull_image(
-                "podman", image_ref="ghcr.io/nrmeyers/agentalloy@sha256:abc123"
+                "podman", image_ref="ghcr.io/jay-webster/agentalloy@sha256:abc123"
             )
             cmd = mock_run.call_args[0][0]
-            assert cmd == ["podman", "pull", "ghcr.io/nrmeyers/agentalloy@sha256:abc123"]
+            assert cmd == ["podman", "pull", "ghcr.io/jay-webster/agentalloy@sha256:abc123"]
 
     def test_default_image_is_ghcr(self):
-        """Default image is ghcr.io/nrmeyers/agentalloy:latest."""
+        """Default image is ghcr.io/jay-webster/agentalloy:latest."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             container_runtime._pull_image("podman")
             cmd = mock_run.call_args[0][0]
-            assert cmd == ["podman", "pull", "ghcr.io/nrmeyers/agentalloy:latest"]
+            assert cmd == ["podman", "pull", "ghcr.io/jay-webster/agentalloy:latest"]
 
 
 # ---------------------------------------------------------------------------

@@ -608,7 +608,7 @@ class TestRunFromArgs:
         assert rc == 0
         # Verify the image_ref was constructed correctly
         cfg = mock.call_args[0][0]
-        assert cfg.image_tag == "ghcr.io/nrmeyers/agentalloy:latest"
+        assert cfg.image_tag == "ghcr.io/jay-webster/agentalloy:latest"
 
     def test_explicit_values(self):
         import argparse
@@ -629,7 +629,7 @@ class TestRunFromArgs:
         assert rc == 0
         # Verify the full image variant was constructed correctly
         cfg = mock.call_args[0][0]
-        assert cfg.image_tag == "ghcr.io/nrmeyers/agentalloy:full"
+        assert cfg.image_tag == "ghcr.io/jay-webster/agentalloy:full"
         assert cfg.runner == "llama-server"
         assert cfg.port == 50000
 
@@ -742,7 +742,7 @@ class TestImageVariantLabel:
     def test_latest_tag(self):
         from agentalloy.install.subcommands.simple_setup import _image_variant_label
 
-        assert _image_variant_label("ghcr.io/nrmeyers/agentalloy:latest") == (
+        assert _image_variant_label("ghcr.io/jay-webster/agentalloy:latest") == (
             "latest (~300 MB, no model)"
         )
         assert _image_variant_label("latest") == "latest (~300 MB, no model)"
@@ -750,7 +750,7 @@ class TestImageVariantLabel:
     def test_full_tag(self):
         from agentalloy.install.subcommands.simple_setup import _image_variant_label
 
-        assert _image_variant_label("ghcr.io/nrmeyers/agentalloy:full") == (
+        assert _image_variant_label("ghcr.io/jay-webster/agentalloy:full") == (
             "full (~975 MB, pre-pulled model)"
         )
         assert _image_variant_label("full") == "full (~975 MB, pre-pulled model)"
@@ -1492,7 +1492,7 @@ class TestContainerFlow:
 
         st = state_mod.load_state()
         # Should be absolute path
-        assert st["image_tag"] == "ghcr.io/nrmeyers/agentalloy:latest"
+        assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
     def test_image_tag_resolved_from_repo_root_not_cwd(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
@@ -1536,7 +1536,7 @@ class TestContainerFlow:
         import agentalloy.install.state as state_mod
 
         st = state_mod.load_state()
-        assert st["image_tag"] == "ghcr.io/nrmeyers/agentalloy:latest"
+        assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
     def test_image_tag_resolved_from_cwd_when_present(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
@@ -1571,7 +1571,7 @@ class TestContainerFlow:
         import agentalloy.install.state as state_mod
 
         st = state_mod.load_state()
-        assert st["image_tag"] == "ghcr.io/nrmeyers/agentalloy:latest"
+        assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
     def test_image_tag_accepts_dockerfile_alternative(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
@@ -1606,8 +1606,8 @@ class TestContainerFlow:
         import agentalloy.install.state as state_mod
 
         st = state_mod.load_state()
-        # image_tag is always "ghcr.io/nrmeyers/agentalloy:latest" regardless of build context
-        assert st["image_tag"] == "ghcr.io/nrmeyers/agentalloy:latest"
+        # image_tag is always "ghcr.io/jay-webster/agentalloy:latest" regardless of build context
+        assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
     def test_interactive_fallback_accepts_directory_path(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
@@ -1661,8 +1661,8 @@ class TestContainerFlow:
         import agentalloy.install.state as state_mod
 
         st = state_mod.load_state()
-        # image_tag is always "ghcr.io/nrmeyers/agentalloy:latest" regardless of build context
-        assert st["image_tag"] == "ghcr.io/nrmeyers/agentalloy:latest"
+        # image_tag is always "ghcr.io/jay-webster/agentalloy:latest" regardless of build context
+        assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
     def test_interactive_fallback_accepts_image_tag_path(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
@@ -1715,8 +1715,8 @@ class TestContainerFlow:
         import agentalloy.install.state as state_mod
 
         st = state_mod.load_state()
-        # image_tag is always "ghcr.io/nrmeyers/agentalloy:latest" regardless of build context
-        assert st["image_tag"] == "ghcr.io/nrmeyers/agentalloy:latest"
+        # image_tag is always "ghcr.io/jay-webster/agentalloy:latest" regardless of build context
+        assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
     def test_container_cpu_note_shown_to_every_host(
         self, tmp_state_dir: tuple[Path, Path], capsys: pytest.CaptureFixture[str]

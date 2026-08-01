@@ -676,7 +676,7 @@ _RETRY_AFTER_CAP_S = 60.0
 # access: the default ``Python-urllib/x.y`` UA is aggressively 429'd. An HF token
 # (``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN``) lifts the anonymous per-IP cap when
 # present; absent, the request stays anonymous but is at least UA-tagged.
-_DOWNLOAD_USER_AGENT = "agentalloy-pull-models (+https://github.com/nrmeyers/agentalloy)"
+_DOWNLOAD_USER_AGENT = "agentalloy-pull-models (+https://github.com/jay-webster/agentalloy)"
 
 
 def _download_headers(url: str) -> dict[str, str]:

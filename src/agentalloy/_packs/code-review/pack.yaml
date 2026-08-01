@@ -1,5 +1,5 @@
 name: code-review
-version: 1.0.6
+version: 1.0.7
 tier: workflow
 description: |
   Code review craft — defect-spotting patterns (race conditions, off-by-one, error swallowing, async pitfalls, security smells). code-review-craft-and-feedback was auto-rejected for hard duplication with sdd-verify-and-review (review process content overlaps); code-simplification routed to needs-human after 4 bounces. The shipped skill focuses specifically on defect-spotting which is additive to the SDD verify pack.
@@ -7,7 +7,7 @@ author: navistone
 embed_model: nomic-embed-text-v1.5
 embedding_dim: 768
 license: MIT
-homepage: https://github.com/nrmeyers/agentalloy
+homepage: https://github.com/jay-webster/agentalloy
 always_install: false
 depends_on:
 - core

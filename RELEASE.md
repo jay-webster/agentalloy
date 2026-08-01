@@ -4,7 +4,7 @@ How we branch, commit, PR, version, and tag in this repo. Read this before openi
 a PR or cutting a release. The conventions below are what CI and the build
 pipeline actually enforce — follow them and merges/builds stay green.
 
-The forge is **GitHub** (`git@github.com:nrmeyers/agentalloy.git`). Use the `gh`
+The forge is **GitHub** (`git@github.com:jay-webster/agentalloy.git`). Use the `gh`
 CLI for PRs, merges, and checks.
 
 ---
@@ -156,7 +156,7 @@ What the automation guarantees, and why it's shaped this way:
   uploads `web-dist.tar.gz` onto it with `gh release upload`, so the release
   is created first and the build dispatched second.
 - The tag build publishes the release-pinned
-  `ghcr.io/nrmeyers/agentalloy:v<X.Y.Z>` image (corpus baked in) and attaches
+  `ghcr.io/jay-webster/agentalloy:v<X.Y.Z>` image (corpus baked in) and attaches
   the version-matched `web-dist.tar.gz` to the release.
 - The build is **dispatched explicitly** (`workflow_dispatch --ref v<X.Y.Z>`)
   because tags created with `GITHUB_TOKEN` do not fire `on: push: tags`

@@ -51,12 +51,12 @@ def test_is_dim_mismatch():
 
 def test_target_image_preserves_full_variant():
     assert (
-        up._target_image("ghcr.io/nrmeyers/agentalloy:2.2.0-full", "v2.2.1")
-        == "ghcr.io/nrmeyers/agentalloy:2.2.1-full"
+        up._target_image("ghcr.io/jay-webster/agentalloy:2.2.0-full", "v2.2.1")
+        == "ghcr.io/jay-webster/agentalloy:2.2.1-full"
     )
     assert (
-        up._target_image("ghcr.io/nrmeyers/agentalloy:latest", "v2.2.1")
-        == "ghcr.io/nrmeyers/agentalloy:2.2.1"
+        up._target_image("ghcr.io/jay-webster/agentalloy:latest", "v2.2.1")
+        == "ghcr.io/jay-webster/agentalloy:2.2.1"
     )
 
 
@@ -758,7 +758,7 @@ def test_container_recreates_with_versioned_image():
     state = {
         "deployment": "container",
         "runtime_binary": "podman",
-        "image_tag": "ghcr.io/nrmeyers/agentalloy:2.2.0-full",
+        "image_tag": "ghcr.io/jay-webster/agentalloy:2.2.0-full",
         "installed_packs": ["core"],
     }
     from agentalloy.install.subcommands import container_runtime as cr
@@ -771,8 +771,8 @@ def test_container_recreates_with_versioned_image():
     ):
         actions, warnings = up._upgrade_container("v2.2.1", state, assume_yes=True)
 
-    pull.assert_called_once_with("podman", "ghcr.io/nrmeyers/agentalloy:2.2.1-full")
-    assert run_ct.call_args.kwargs["image_ref"] == "ghcr.io/nrmeyers/agentalloy:2.2.1-full"
+    pull.assert_called_once_with("podman", "ghcr.io/jay-webster/agentalloy:2.2.1-full")
+    assert run_ct.call_args.kwargs["image_ref"] == "ghcr.io/jay-webster/agentalloy:2.2.1-full"
     # The recreate must NOT generate a host entrypoint (temp-leak fix) — packs
     # are delivered via env to the baked /app/entrypoint.sh.
     assert "entrypoint" not in run_ct.call_args.kwargs
@@ -783,7 +783,7 @@ def test_container_recreates_with_versioned_image():
     assert not warnings
     # install-state image_tag is pinned to the image we actually ran (preserving
     # the -full variant), so doctor + the next upgrade's base reflect reality.
-    assert state["image_tag"] == "ghcr.io/nrmeyers/agentalloy:2.2.1-full"
+    assert state["image_tag"] == "ghcr.io/jay-webster/agentalloy:2.2.1-full"
     save.assert_called_once()
 
 
@@ -793,7 +793,7 @@ def test_container_recreate_threads_configured_port():
     state = {
         "deployment": "container",
         "runtime_binary": "podman",
-        "image_tag": "ghcr.io/nrmeyers/agentalloy:2.2.0-full",
+        "image_tag": "ghcr.io/jay-webster/agentalloy:2.2.0-full",
         "installed_packs": ["core"],
         "port": 8123,
     }
@@ -848,7 +848,7 @@ def test_container_recreate_runs_under_new_cli_after_swap():
     state = {
         "deployment": "container",
         "runtime_binary": "podman",
-        "image_tag": "ghcr.io/nrmeyers/agentalloy:3.0.4",
+        "image_tag": "ghcr.io/jay-webster/agentalloy:3.0.4",
         "installed_packs": ["core"],
     }
     from agentalloy.install.subcommands import container_runtime as cr
@@ -879,7 +879,7 @@ def test_container_recreate_source_stays_in_process():
     state = {
         "deployment": "container",
         "runtime_binary": "podman",
-        "image_tag": "ghcr.io/nrmeyers/agentalloy:3.0.4",
+        "image_tag": "ghcr.io/jay-webster/agentalloy:3.0.4",
         "installed_packs": ["core"],
     }
     from agentalloy.install.subcommands import container_runtime as cr
