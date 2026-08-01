@@ -896,7 +896,7 @@ class TestEvaluateSignalBanner:
         assert result.banner is not None
         assert result.banner.startswith("[agentalloy · spec]")
 
-    def test_tool_less_request_leaves_banner_none(self, tmp_path: Path) -> None:
+    def test_tool_less_carrier_request_sets_banner(self, tmp_path: Path) -> None:
         _set_phase(tmp_path, "spec")
         with (
             mock.patch(
@@ -913,13 +913,13 @@ class TestEvaluateSignalBanner:
                 return_value=None,
             ),
         ):
-            # tools=None on a header-keyed session → non-carrier → no banner.
-            # (A session header is what makes a tool-less turn a background ping;
-            # tool-less fingerprint sessions — aider — DO carry.)
+            # tools=None on a header-keyed session → still a carrier: any
+            # identifiable session (session_key present) carries, regardless
+            # of whether this particular turn happens to pass tools.
             result = asyncio.run(
                 evaluate_signal(_req("work", tools=False), tmp_path, session_id="sess-bg")
             )
-        assert result.banner is None
+        assert result.banner is not None
 
     def test_lifecycle_off_leaves_banner_none(self, tmp_path: Path) -> None:
         d = tmp_path / ".agentalloy"

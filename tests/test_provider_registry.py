@@ -412,6 +412,11 @@ class TestFilterToolsForPhase(TestCase):
     def test_empty_tools_list(self):
         self.assertEqual(filter_tools_for_phase([], "spec"), [])
 
+    def test_free_mode_bypasses_gate_in_denied_phase(self):
+        for phase in ("intake", "spec", "design"):
+            filtered = filter_tools_for_phase(self.ANTHROPIC_TOOLS, phase, free_mode=True)
+            self.assertIs(filtered, self.ANTHROPIC_TOOLS, msg=f"phase={phase}")
+
 
 if __name__ == "__main__":
     main()

@@ -612,7 +612,9 @@ async def proxy_chat_completions(
 
     # --- Step 5: Forward to upstream ---
     if modified_request.tools is not None:
-        filtered_tools = filter_tools_for_phase(modified_request.tools, phase)
+        filtered_tools = filter_tools_for_phase(
+            modified_request.tools, phase, free_mode=bool(signal_result and signal_result.free_mode)
+        )
         if filtered_tools is not modified_request.tools:
             modified_request = modified_request.model_copy(update={"tools": filtered_tools})
 

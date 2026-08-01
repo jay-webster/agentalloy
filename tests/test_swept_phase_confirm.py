@@ -111,11 +111,13 @@ async def test_precedence_single_directive_on_ship_with_record(tmp_path: Path):
     assert "confirm" in joined and "intake" in joined
 
 
-async def test_toolless_header_request_does_not_fire(tmp_path: Path):
+async def test_toolless_header_request_still_fires(tmp_path: Path):
+    # Carrier gate: any identifiable session (session_key present) is a carrier,
+    # so a tool-less header-keyed request still fires the swept-phase confirm.
     _set_phase(tmp_path, "build", transitioned_by="other-session")
     _seed_announced(tmp_path, "design", ["me"])
     sig = await evaluate_signal(_req(tools=False), tmp_path, session_id="me")
-    assert not sig.confirm_directives
+    assert sig.confirm_directives
 
 
 async def test_swept_confirm_does_not_write_phase(tmp_path: Path):
