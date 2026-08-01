@@ -574,7 +574,7 @@ class TestRootlessPodman:
                 assert "--replace" in call_args
                 assert "-d" in call_args
                 # Uses GHCR image by default
-                assert "ghcr.io/nrmeyers/agentalloy:latest" in call_args
+                assert "ghcr.io/jay-webster/agentalloy:latest" in call_args
             finally:
                 entrypoint.unlink(missing_ok=True)
 

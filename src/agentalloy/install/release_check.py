@@ -32,7 +32,7 @@ from typing import Any
 
 from agentalloy.install import state as install_state
 
-REPO = "nrmeyers/agentalloy"
+REPO = "jay-webster/agentalloy"
 _RELEASES_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 _RELEASES_BY_TAG = f"https://api.github.com/repos/{REPO}/releases/tags/"
 _USER_AGENT = "agentalloy-release-check"

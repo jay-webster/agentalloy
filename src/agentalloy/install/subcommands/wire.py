@@ -216,7 +216,7 @@ def _seed_entry_phase(root: Path) -> str | None:
 _AGENTALLOY_README = """\
 # .agentalloy/ — AgentAlloy per-repo state
 
-Machine-managed by the [AgentAlloy](https://github.com/nrmeyers/agentalloy)
+Machine-managed by the [AgentAlloy](https://github.com/jay-webster/agentalloy)
 proxy and CLI. Safe to inspect; edit only via `agentalloy` commands. Not a
 secret store, and git-excluded by `agentalloy add`.
 

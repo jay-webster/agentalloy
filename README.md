@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/nrmeyers/agentalloy?color=blue" alt="license" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/jay-webster/agentalloy?color=blue" alt="license" /></a>
   &nbsp;
   <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="python 3.12+" />
   &nbsp;
@@ -88,7 +88,7 @@ Two doors — pick the one that's you:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh                   # 1. install uv (Linux / macOS)
-uv tool install git+https://github.com/nrmeyers/agentalloy.git    # 2. install the agentalloy CLI
+uv tool install git+https://github.com/jay-webster/agentalloy.git # 2. install the agentalloy CLI
 agentalloy setup                                                  # 3. run the setup wizard
 cd /path/to/your/repo && agentalloy add claude-code              # 4. add each project (per-repo — repeat as needed)
 ```
@@ -138,7 +138,7 @@ Your agent calls `/compose`, gets back the relevant raw skill prose, and assembl
 
 ## Container deployment
 
-The default deployment is a single container bundling the service and its two `llama-server` inference runners (embed :47951, reranker :47952 — neither exposed), pulled from GHCR (`ghcr.io/nrmeyers/agentalloy:latest`). One command sets it up — `agentalloy setup -n --deployment container --harness <name>` — port 47950 is the only external surface, and a named `agentalloy-data` volume persists corpus, databases, and GGUFs across restarts.
+The default deployment is a single container bundling the service and its two `llama-server` inference runners (embed :47951, reranker :47952 — neither exposed), pulled from GHCR (`ghcr.io/jay-webster/agentalloy:latest`). One command sets it up — `agentalloy setup -n --deployment container --harness <name>` — port 47950 is the only external surface, and a named `agentalloy-data` volume persists corpus, databases, and GGUFs across restarts.
 
 Container inference is CPU-only on every host (GPU acceleration requires a native install) — fast enough for the runtime path. Architecture, bootstrap sequence, hardware requirements, and operational commands: [INSTALL.md](INSTALL.md#container-architecture).
 
@@ -343,7 +343,7 @@ Integration tests (`uv run pytest -m integration`) need a running nomic-embed ll
 
 ## Need Help?
 
-[Installation guide](docs/install/) (per-harness setup) · [Operator guide](docs/operator.md) (CLI reference, service management) · [Troubleshooting](docs/troubleshooting.md) (common errors and fixes) · [Discussions](https://github.com/nrmeyers/agentalloy/discussions) (ask questions, share setups)
+[Installation guide](docs/install/) (per-harness setup) · [Operator guide](docs/operator.md) (CLI reference, service management) · [Troubleshooting](docs/troubleshooting.md) (common errors and fixes)
 
 ---
 

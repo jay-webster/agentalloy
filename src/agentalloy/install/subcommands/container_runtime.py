@@ -107,7 +107,7 @@ def _detect_runtime_binary() -> str | None:
 # Image pull / load
 # ---------------------------------------------------------------------------
 
-_DEFAULT_IMAGE = "ghcr.io/nrmeyers/agentalloy:latest"
+_DEFAULT_IMAGE = "ghcr.io/jay-webster/agentalloy:latest"
 
 # Public alias for cross-module access (unprefixed consumers import this)
 DEFAULT_IMAGE = _DEFAULT_IMAGE
@@ -129,7 +129,7 @@ def _pull_image(
     runtime : str
         Container runtime binary (e.g. ``"podman"`` or ``"docker"``).
     image_ref : str | None
-        Image reference to pull. Defaults to ``ghcr.io/nrmeyers/agentalloy:latest``.
+        Image reference to pull. Defaults to ``ghcr.io/jay-webster/agentalloy:latest``.
     offline : bool
         If True, load from tarball instead of pulling.
     tarball_path : Path | None
@@ -719,7 +719,7 @@ def _run_container(
         Comma-separated list of packs to install. Passed to the baked entrypoint
         via the ``AGENTALLOY_PACKS`` env var.
     image_ref : str | None
-        Image reference to run. Defaults to ``ghcr.io/nrmeyers/agentalloy:latest``.
+        Image reference to run. Defaults to ``ghcr.io/jay-webster/agentalloy:latest``.
     port : int
         Host-side port to publish. The container-internal side always stays
         ``47950`` (that's what the baked entrypoint binds to) — only the host

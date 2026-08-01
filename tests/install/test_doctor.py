@@ -685,7 +685,7 @@ class TestContainerDoctor:
         "deployment": "container",
         "runtime_binary": "podman",
         "container_name": "agentalloy",
-        "image_tag": "ghcr.io/nrmeyers/agentalloy:latest",
+        "image_tag": "ghcr.io/jay-webster/agentalloy:latest",
         "port": 47950,
     }
 
@@ -693,7 +693,7 @@ class TestContainerDoctor:
     def _patch_container_image(self) -> Any:
         # _run_doctor_container inspects the live image; pin it so tests don't
         # shell out to a real runtime.
-        with patch(_CONTAINER_IMAGE, return_value="ghcr.io/nrmeyers/agentalloy:3.2.3"):
+        with patch(_CONTAINER_IMAGE, return_value="ghcr.io/jay-webster/agentalloy:3.2.3"):
             yield
 
     def _healthy_patches(self) -> Any:

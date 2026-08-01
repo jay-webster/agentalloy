@@ -15,7 +15,7 @@ Full teardown for a agentalloy install. By default removes:
 - Outputs directory (``${XDG_DATA_HOME}/agentalloy/outputs/``) and
   ``server.log`` — derivable artifacts that hold no user content.
 - The ``uv tool`` installation of agentalloy.
-- Container image (``ghcr.io/nrmeyers/agentalloy:latest``) for container
+- Container image (``ghcr.io/jay-webster/agentalloy:latest``) for container
   deployments.
 
 With ``--remove-data`` (or the ``full`` preset), also removes:
@@ -319,7 +319,7 @@ def _remove_container_image(
         warnings.append(
             "Container deployment detected but runtime binary unresolved — "
             "skipping image cleanup. Remove manually with your runtime: "
-            "`<podman|docker> rmi -f ghcr.io/nrmeyers/agentalloy:latest`"
+            "`<podman|docker> rmi -f ghcr.io/jay-webster/agentalloy:latest`"
         )
         return actions
 

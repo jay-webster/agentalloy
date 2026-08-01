@@ -2,7 +2,7 @@
 
 Operator guide for AgentAlloy. Covers key concepts, terminology, system architecture, configuration, and customization for operators who install, maintain, and extend their AgentAlloy instance.
 
-> For the step-by-step install runbook, the full `agentalloy` command reference (`add` — the primary wiring verb, `worktree`, `customize`, `cleanup`/`cleanup --deep`, the deprecated per-harness `wire`/`unwire`, …), and container operations (the `ghcr.io/nrmeyers/agentalloy` image, ports `47950`/`47951`/`47952`, and corpus volume self-heal on reuse), see **[INSTALL.md](../INSTALL.md)**.
+> For the step-by-step install runbook, the full `agentalloy` command reference (`add` — the primary wiring verb, `worktree`, `customize`, `cleanup`/`cleanup --deep`, the deprecated per-harness `wire`/`unwire`, …), and container operations (the `ghcr.io/jay-webster/agentalloy` image, ports `47950`/`47951`/`47952`, and corpus volume self-heal on reuse), see **[INSTALL.md](../INSTALL.md)**.
 
 ## Key Concepts and Terminology
 

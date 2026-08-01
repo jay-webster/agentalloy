@@ -1,6 +1,6 @@
 """``agentalloy setup`` — interactive one-shot install wizard.
 
-    pipx install git+https://github.com/nrmeyers/agentalloy.git
+    pipx install git+https://github.com/jay-webster/agentalloy.git
     agentalloy setup          # interactive: questions -> execution -> validation
 
 The command:
@@ -76,12 +76,12 @@ def _print(*args: Any, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
 def _image_variant_label(image_ref: str) -> str:
     """Return a human-readable label for the image variant.
 
-    Handles both full image refs (e.g. 'ghcr.io/nrmeyers/agentalloy:latest')
+    Handles both full image refs (e.g. 'ghcr.io/jay-webster/agentalloy:latest')
     and bare tag suffixes (e.g. 'latest').
 
     Examples:
-        'ghcr.io/nrmeyers/agentalloy:latest' -> 'latest (~300 MB, no model)'
-        'ghcr.io/nrmeyers/agentalloy:full'   -> 'full (~975 MB, pre-pulled model)'
+        'ghcr.io/jay-webster/agentalloy:latest' -> 'latest (~300 MB, no model)'
+        'ghcr.io/jay-webster/agentalloy:full'   -> 'full (~975 MB, pre-pulled model)'
         'latest'                              -> 'latest (~300 MB, no model)'
         'full'                                -> 'full (~975 MB, pre-pulled model)'
     """
@@ -211,7 +211,9 @@ class SetupConfig:
 
     # Container runtime fields (used when deployment="container")
     runtime_binary: str = ""  # resolved path to container runtime (podman/docker)
-    image_tag: str = "ghcr.io/nrmeyers/agentalloy:latest"  # full container image reference (GHCR)
+    image_tag: str = (
+        "ghcr.io/jay-webster/agentalloy:latest"  # full container image reference (GHCR)
+    )
     container_name: str = "agentalloy"  # base name for containers
     data_volume: str = "agentalloy-data"  # named volume for persistent data
     readiness_timeout: int | None = None  # user override for readiness timeout (seconds)
@@ -2329,7 +2331,7 @@ def _run_from_args(args: argparse.Namespace) -> int:
     """Bridge from argparse.Namespace to SetupConfig -> run_setup()."""
     # Build the full image reference from the CLI-provided tag suffix.
     image_tag_suffix = getattr(args, "image_tag", "latest")
-    image_ref = f"ghcr.io/nrmeyers/agentalloy:{image_tag_suffix}"
+    image_ref = f"ghcr.io/jay-webster/agentalloy:{image_tag_suffix}"
     cfg = SetupConfig(
         runner=args.runner,  # may be None; resolved inside run_setup
         model=args.model or "",
