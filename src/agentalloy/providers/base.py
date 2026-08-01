@@ -214,13 +214,18 @@ def _tool_name(tool: dict[str, Any]) -> str:
     return name if isinstance(name, str) else ""
 
 
-def filter_tools_for_phase(tools: list[dict[str, Any]], phase: str | None) -> list[dict[str, Any]]:
+def filter_tools_for_phase(
+    tools: list[dict[str, Any]], phase: str | None, *, free_mode: bool = False
+) -> list[dict[str, Any]]:
     """Drop ``GATED_TOOL_NAMES`` from *tools* when *phase* is in ``DENIED_PHASES``.
+
+    ``free_mode`` bypasses the gate entirely — ``agentalloy flow free`` suppresses
+    workflow steering, so it must not still strip write tools out from under it.
 
     Returns *tools* unchanged (same list reference) when nothing is filtered,
     so callers can cheaply detect a no-op via identity.
     """
-    if phase not in DENIED_PHASES:
+    if free_mode or phase not in DENIED_PHASES:
         return tools
     filtered = [t for t in tools if _tool_name(t) not in GATED_TOOL_NAMES]
     return filtered if len(filtered) != len(tools) else tools

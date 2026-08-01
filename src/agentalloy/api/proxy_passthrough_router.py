@@ -247,7 +247,7 @@ async def _maybe_inject(
     # 0. Tool gating — drop disk-writing tools while the phase is discussion-only.
     raw_tools = current.get("tools")
     if isinstance(raw_tools, list):
-        filtered_tools = filter_tools_for_phase(raw_tools, signal.phase)
+        filtered_tools = filter_tools_for_phase(raw_tools, signal.phase, free_mode=signal.free_mode)
         if filtered_tools is not raw_tools:
             current = {**current, "tools": filtered_tools}
 
