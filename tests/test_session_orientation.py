@@ -201,19 +201,15 @@ def test_degraded_turn_does_not_burn_session(tmp_path: Path) -> None:
     assert _eval(_req("a"), tmp_path, session_id="A").announce is False
 
 
-def test_background_request_does_not_announce_or_burn(tmp_path: Path) -> None:
-    # The recurring "no orientation block" bug: a harness reuses one session id for
-    # its main loop AND background micro-requests (Claude Code's quota ping, title /
-    # topic-detection calls). Those carry no tools. A tool-less request must NOT
-    # announce and must NOT burn the session marker, so the real agent turn that
-    # follows still gets oriented.
+def test_carrier_session_announces_once_even_toolless(tmp_path: Path) -> None:
+    # Any identifiable session (session_key present) is a carrier, even when a
+    # particular turn happens to carry no tools (Claude Code's quota ping, title /
+    # topic-detection calls). The first carrier turn for a session announces and
+    # burns the marker; every turn after that — tool-less or not — stays quiet.
     _set_phase(tmp_path, "build")
-    # Background ping for session A arrives first (tool-less) — stays quiet, no burn.
+    assert _eval(_req("quota", tools=False), tmp_path, session_id="A").announce is True
     assert _eval(_req("quota", tools=False), tmp_path, session_id="A").announce is False
-    assert _eval(_req("quota", tools=False), tmp_path, session_id="A").announce is False
-    # The real agent turn for the SAME session still announces (marker not burned).
-    assert _eval(_req("real task"), tmp_path, session_id="A").announce is True
-    # ...then goes quiet as usual.
+    # The real agent turn for the SAME session stays quiet (marker already burned).
     assert _eval(_req("real task"), tmp_path, session_id="A").announce is False
 
 
@@ -237,14 +233,6 @@ def test_toolless_fingerprint_session_is_a_carrier(tmp_path: Path) -> None:
     # A different tool-less conversation is its own session and orients itself
     # without having been burned by the first.
     assert _eval(_req("another task", tools=False), tmp_path).announce is True
-
-
-def test_toolless_header_session_still_gated(tmp_path: Path) -> None:
-    # The fingerprint carve-out must not weaken the header-source gate: a
-    # tool-less request WITH a session header is still a background ping.
-    _set_phase(tmp_path, "build")
-    assert _eval(_req("quota", tools=False), tmp_path, session_id="A").announce is False
-    assert _eval(_req("real task"), tmp_path, session_id="A").announce is True
 
 
 def test_fingerprint_session_reorients_when_first_message_changes(tmp_path: Path) -> None:
