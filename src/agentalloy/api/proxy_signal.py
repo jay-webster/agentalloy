@@ -894,7 +894,7 @@ async def evaluate_signal(
             repo=repo,
             session_key=session_key,
             session_source=session_source,
-            workflow_system_prose=skill.get("raw_prose") if is_carrier else None,
+            workflow_system_prose=skill.get("raw_prose") if (skill and is_carrier) else None,
         )
 
     # Compute cadence state but DO NOT commit it here. Writing the markers at
@@ -939,7 +939,7 @@ async def evaluate_signal(
         session_source=session_source,
         pending_announce=pending_announce,
         pending_composed=pending_composed,
-        workflow_system_prose=skill.get("raw_prose") if is_carrier else None,
+        workflow_system_prose=skill.get("raw_prose") if (skill and is_carrier) else None,
     )
 
 
