@@ -82,3 +82,32 @@ def test_trailing_punctuation_stripped() -> None:
         "https://example.com/b",
         "https://example.com/c!",
     ]
+
+
+def test_slack_piped_link_unwrapped() -> None:
+    body = "Test link for ingestion: <https://example.com/test-link-ingestion|example.com/test-link-ingestion>"
+
+    links, skipped = extract_links(body)
+
+    assert links == ["https://example.com/test-link-ingestion"]
+    assert skipped == 0
+
+
+def test_slack_bare_angle_bracket_link_unwrapped() -> None:
+    body = "See <https://example.com/bare> for details"
+
+    links, skipped = extract_links(body)
+
+    assert links == ["https://example.com/bare"]
+    assert skipped == 0
+
+
+def test_slack_wrapped_link_still_noise_filtered() -> None:
+    body = (
+        "<https://example.com/unsubscribe?id=1|unsubscribe> or <https://example.com/keep|keep this>"
+    )
+
+    links, skipped = extract_links(body)
+
+    assert links == ["https://example.com/keep"]
+    assert skipped == 0
