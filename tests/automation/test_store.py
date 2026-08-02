@@ -357,7 +357,7 @@ def test_add_url_first_call_inserts_and_returns_true(store: CandidateStore) -> N
     assert inserted is True
     [row] = store.list()
     assert row.message_id == message_id
-    assert row.source == "discord"
+    assert row.source == "slack"
     assert row.status == "new"
 
 
@@ -400,9 +400,9 @@ def test_add_url_dedupes_against_pre_existing_legacy_row(
 
 
 def test_set_state_then_get_state_round_trips(store: CandidateStore) -> None:
-    store.set_state("discord_last_message_id", "123")
+    store.set_state("slack_last_message_id", "123")
 
-    assert store.get_state("discord_last_message_id") == "123"
+    assert store.get_state("slack_last_message_id") == "123"
 
 
 def test_get_state_on_unset_key_returns_none(store: CandidateStore) -> None:
@@ -435,12 +435,12 @@ def test_add_url_flagged_candidate_blocks_accept(store: CandidateStore) -> None:
 
 
 def test_set_state_twice_overwrites_not_duplicates(store: CandidateStore) -> None:
-    store.set_state("discord_last_message_id", "123")
-    store.set_state("discord_last_message_id", "456")
+    store.set_state("slack_last_message_id", "123")
+    store.set_state("slack_last_message_id", "456")
 
-    assert store.get_state("discord_last_message_id") == "456"
+    assert store.get_state("slack_last_message_id") == "456"
     [count] = store._conn.execute(
         "SELECT COUNT(*) FROM ingest_state WHERE key = ?",
-        ("discord_last_message_id",),
+        ("slack_last_message_id",),
     ).fetchone()
     assert count == 1

@@ -132,15 +132,15 @@ def _cmd_extract_links(args: argparse.Namespace, store: CandidateStore) -> int:
     return 0
 
 
-def _cmd_discord_cursor_get(args: argparse.Namespace, store: CandidateStore) -> int:
-    value = store.get_state("discord_last_message_id")
+def _cmd_slack_cursor_get(args: argparse.Namespace, store: CandidateStore) -> int:
+    value = store.get_state("slack_last_message_id")
     if value is not None:
         print(value)
     return 0
 
 
-def _cmd_discord_cursor_set(args: argparse.Namespace, store: CandidateStore) -> int:
-    store.set_state("discord_last_message_id", args.message_id)
+def _cmd_slack_cursor_set(args: argparse.Namespace, store: CandidateStore) -> int:
+    store.set_state("slack_last_message_id", args.message_id)
     return 0
 
 
@@ -313,7 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_url_parser.add_argument("--url", required=True)
     add_url_parser.add_argument("--subject", required=True)
     add_url_parser.add_argument("--received-at", required=True)
-    add_url_parser.add_argument("--source", default="discord")
+    add_url_parser.add_argument("--source", default="slack")
     add_url_parser.set_defaults(func=_cmd_add_url)
 
     extract_links_parser = ingest_sub.add_parser(
@@ -325,19 +325,19 @@ def build_parser() -> argparse.ArgumentParser:
     extract_links_parser.add_argument("--cap", type=int, default=5)
     extract_links_parser.set_defaults(func=_cmd_extract_links)
 
-    discord_cursor_parser = ingest_sub.add_parser(
-        "discord-cursor", help="Get or set the Discord ingestion cursor"
+    slack_cursor_parser = ingest_sub.add_parser(
+        "slack-cursor", help="Get or set the Slack ingestion cursor"
     )
-    discord_cursor_sub = discord_cursor_parser.add_subparsers(
-        dest="discord_cursor_command", required=True
+    slack_cursor_sub = slack_cursor_parser.add_subparsers(
+        dest="slack_cursor_command", required=True
     )
 
-    discord_cursor_get_parser = discord_cursor_sub.add_parser("get", help="Print the cursor")
-    discord_cursor_get_parser.set_defaults(func=_cmd_discord_cursor_get)
+    slack_cursor_get_parser = slack_cursor_sub.add_parser("get", help="Print the cursor")
+    slack_cursor_get_parser.set_defaults(func=_cmd_slack_cursor_get)
 
-    discord_cursor_set_parser = discord_cursor_sub.add_parser("set", help="Set the cursor")
-    discord_cursor_set_parser.add_argument("--message-id", required=True)
-    discord_cursor_set_parser.set_defaults(func=_cmd_discord_cursor_set)
+    slack_cursor_set_parser = slack_cursor_sub.add_parser("set", help="Set the cursor")
+    slack_cursor_set_parser.add_argument("--message-id", required=True)
+    slack_cursor_set_parser.set_defaults(func=_cmd_slack_cursor_set)
 
     return parser
 

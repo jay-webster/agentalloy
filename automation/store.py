@@ -173,7 +173,7 @@ class CandidateStore:
         return None
 
     def add_url(
-        self, url: str, subject: str, received_at: str, source: str = "discord"
+        self, url: str, subject: str, received_at: str, source: str = "slack"
     ) -> tuple[str, bool]:
         existing = self.find_by_url(url)
         if existing is not None:

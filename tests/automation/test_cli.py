@@ -560,23 +560,23 @@ def test_extract_links_text_file_matches_text(
     assert from_text == from_file
 
 
-def test_discord_cursor_get_before_set_is_empty(
+def test_slack_cursor_get_before_set_is_empty(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    exit_code = cli.main(["ingest", "discord-cursor", "get"])
+    exit_code = cli.main(["ingest", "slack-cursor", "get"])
 
     assert exit_code == 0
     output = capsys.readouterr().out
     assert output == ""
 
 
-def test_discord_cursor_set_then_get_round_trips(
+def test_slack_cursor_set_then_get_round_trips(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    cli.main(["ingest", "discord-cursor", "set", "--message-id", "999"])
+    cli.main(["ingest", "slack-cursor", "set", "--message-id", "999"])
     capsys.readouterr()
 
-    cli.main(["ingest", "discord-cursor", "get"])
+    cli.main(["ingest", "slack-cursor", "get"])
     output = capsys.readouterr().out
 
     assert output.strip() == "999"
