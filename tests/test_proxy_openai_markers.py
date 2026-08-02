@@ -244,6 +244,30 @@ def _system_content(captured: dict[str, Any]) -> str:
     return sent["messages"][0]["content"]
 
 
+def test_quiet_turn_still_carries_workflow_prose_in_system_prompt(tmp_path: Path) -> None:
+    """Regression for the deliver-once bug (upstream 5cdca23), mirrored on the
+    OpenAI-compatible surface: a QUIET carrier turn (should_compose=False — no
+    Tier 1 compose) must still carry the workflow's raw operating prose in the
+    system prompt, via `workflow_system_prose` riding the always-on
+    phase_directive seam."""
+    (tmp_path / ".agentalloy").mkdir()
+    captured: dict[str, Any] = {}
+    app = _make_app(captured=captured)
+    signal = SignalResult(
+        should_compose=False,
+        announce=False,
+        phase="build",
+        task="t",
+        workflow_system_prose="Build: work tasks.md top to bottom.",
+    )
+    with patch(_SIGNAL, return_value=signal), TestClient(app) as client:
+        resp = client.post("/v1/chat/completions", json=_body(tmp_path))
+    assert resp.status_code == 200
+    system_content = _system_content(captured)
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in system_content
+    assert "Build: work tasks.md top to bottom." in system_content
+
+
 def test_banner_only_turn_injects_into_upstream_last_user(tmp_path: Path) -> None:
     (tmp_path / ".agentalloy").mkdir()
     captured: dict[str, Any] = {}

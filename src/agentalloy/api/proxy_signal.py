@@ -86,6 +86,14 @@ class SignalResult:
     # workflow skill was loaded for the phase.
     workflow_skill_id: str | None = None
 
+    # The phase's raw workflow prose, available on EVERY carrier turn regardless
+    # of `announce`/`should_compose` cadence — unlike `workflow_prose` above
+    # (which only matters on an announce turn, folded into the Tier 1 compose
+    # block), this rides the per-turn `phase_directive`-into-system-prompt seam
+    # so the operating instructions survive past the one-shot announce turn.
+    # None for a non-carrier request (no session_key). See `is_carrier`.
+    workflow_system_prose: str | None = None
+
     # Tier 2 (per-work-item domain). `current_contract` is the absolute path to the
     # work-item contract whose domain skills should be composed (body → prompt,
     # domain_tags → BM25 steer). `announce_cursor` is True when the cursor changed
@@ -886,6 +894,7 @@ async def evaluate_signal(
             repo=repo,
             session_key=session_key,
             session_source=session_source,
+            workflow_system_prose=skill.get("raw_prose") if (skill and is_carrier) else None,
         )
 
     # Compute cadence state but DO NOT commit it here. Writing the markers at
@@ -930,6 +939,7 @@ async def evaluate_signal(
         session_source=session_source,
         pending_announce=pending_announce,
         pending_composed=pending_composed,
+        workflow_system_prose=skill.get("raw_prose") if (skill and is_carrier) else None,
     )
 
 

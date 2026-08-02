@@ -243,6 +243,29 @@ def test_idempotent_when_phase_block_already_present(tmp_path: Path) -> None:
     assert sent["messages"][-1]["content"].count("BEGIN AGENTALLOY-CONTEXT") == 1
 
 
+def test_quiet_turn_still_carries_workflow_prose_in_system_prompt(tmp_path: Path) -> None:
+    """Regression for the deliver-once bug (upstream 5cdca23): on a QUIET carrier
+    turn (should_compose=False, announce=False — i.e. Tier 1 compose never runs),
+    the workflow's raw operating prose must still land in the system prompt via
+    the always-on phase_directive seam, keyed off `workflow_system_prose` rather
+    than the announce-gated `workflow_prose`."""
+    captured: dict[str, Any] = {}
+    app = _make_app(captured)
+    signal = SignalResult(
+        should_compose=False,
+        announce=False,
+        phase="build",
+        task="the real task",
+        workflow_system_prose="Build: work tasks.md top to bottom.",
+    )
+    with patch(_SIGNAL, return_value=signal), TestClient(app) as client:
+        resp = client.post(f"/proj/{_token(tmp_path)}/v1/messages", json=_anthropic_body())
+    assert resp.status_code == 200
+    sent = json.loads(captured["body"])
+    assert "<!-- BEGIN AGENTALLOY-SYSTEM-PROMPT phase=build -->" in sent["system"]
+    assert "Build: work tasks.md top to bottom." in sent["system"]
+
+
 def test_tc11_sse_relay_byte_for_byte(tmp_path: Path) -> None:
     sse = b"event: message_start\ndata: {}\n\nevent: message_stop\ndata: {}\n\n"
     captured: dict[str, Any] = {}
