@@ -11,6 +11,14 @@ import re
 
 _URL_PATTERN = re.compile(r"https?://[^\s<>\"']+")
 
+# Slack mrkdwn wraps links as <url> or <url|display text>. _URL_PATTERN
+# already treats '<' and '>' as terminators, but not '|' -- so a match
+# starting right after '<' runs past the pipe into the display text before
+# stopping at '>', producing a corrupted "URL". Unwrapping first keeps
+# extract_links a single pure function shared across sources: the pattern
+# never occurs in plain newsletter text, so this is a no-op there.
+_SLACK_WRAPPED_LINK_PATTERN = re.compile(r"<(https?://[^|>\s]+)(?:\|[^>]*)?>")
+
 _TRAILING_PUNCTUATION = ",.);]'\""
 
 _NOISE_PATTERNS: list[re.Pattern[str]] = [
@@ -26,6 +34,7 @@ def _is_noise(url: str) -> bool:
 
 
 def extract_links(text: str, cap: int = 5) -> tuple[list[str], int]:
+    text = _SLACK_WRAPPED_LINK_PATTERN.sub(r"\1", text)
     seen: set[str] = set()
     links: list[str] = []
     skipped = 0
