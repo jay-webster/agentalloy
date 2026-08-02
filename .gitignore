@@ -141,4 +141,5 @@ corpus-seed/*
 # sources.example.yaml (the tracked template) is intentionally not matched here.
 .automation/
 automation/config/sources.yaml
+automation/config/slack.yaml
 automation/intake-drafts/
