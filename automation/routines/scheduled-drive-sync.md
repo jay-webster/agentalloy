@@ -27,7 +27,7 @@ repo and never typed or entered by an interactive Claude session:
 
 Also requires `openssl`, `curl`, and `jq` on the routine's runner (all
 standard on `ubuntu-latest`-class environments; no new dependency beyond
-what `discord-digest-relay.yml` already assumes for step 5).
+what `slack-digest-relay.yml` already assumes for step 5).
 
 ## Obtaining a Drive access token
 
@@ -128,7 +128,7 @@ Then follow `automation/routines/evaluate-candidate.md` (unchanged,
 referenced here rather than duplicated) against `uv run python -m
 automation.cli ingest list --status new`.
 
-## 4. Relay the report to Discord via GitHub (best-effort — never blocks step 5)
+## 4. Relay the report to Slack via GitHub (best-effort — never blocks step 5)
 
 Run:
 
@@ -136,16 +136,18 @@ Run:
 uv run python -m automation.cli ingest report --since "$SINCE"
 ```
 
-This environment's network egress policy blocks `discord.com` directly
-(confirmed `403`, see Notes), so the report is relayed through a GitHub
-Actions workflow (`discord-digest-relay.yml`, running on `ubuntu-latest`,
-which has unrestricted egress) instead of posted to Discord directly.
+This environment's network egress policy is confirmed to block
+`discord.com` directly (see Notes) — whether `hooks.slack.com` is
+reachable from this same sandbox is unverified, so as a conservative
+default the report continues to be relayed through a GitHub Actions
+workflow (`slack-digest-relay.yml`, running on `ubuntu-latest`, which has
+unrestricted egress) rather than posted to Slack directly from here.
 Dispatch it with a `repository_dispatch` event, authenticated with
 `GH_DISPATCH_TOKEN` (routine-only config, provisioned by Jay — never
 committed to this repo and never typed or entered by Claude):
 
 ```
-jq -n --arg report "$(uv run python -m automation.cli ingest report --since "$SINCE")" '{event_type: "discord-digest", client_payload: {report: $report}}' \
+jq -n --arg report "$(uv run python -m automation.cli ingest report --since "$SINCE")" '{event_type: "slack-digest", client_payload: {report: $report}}' \
   | curl -sS -X POST \
       -H "Authorization: Bearer $GH_DISPATCH_TOKEN" \
       -H "Accept: application/vnd.github+json" \
@@ -168,14 +170,14 @@ time this environment's egress policy actually blocked the request.
 
 Upload `.automation/candidates.db`, overwriting
 `agentalloy-automation-candidates.db` in Drive, **as long as steps 1-3
-completed without error — independent of whether step 4 (Discord)
+completed without error — independent of whether step 4 (Slack)
 succeeded.** This is the only step that matters for the *database* state
 to persist into the next scheduled run; a real evaluation batch (486/486
 processed, 0 errors) is valid, persistable data regardless of whether the
 notification about it happened to get delivered. If steps 1-3 genuinely
 failed (corrupt import, a crash mid-evaluation), do NOT upload — stop and
 report the error instead, so a partial or corrupt *data* state is never
-persisted. A failed Discord POST is not that — see step 4.
+persisted. A failed Slack POST is not that — see step 4.
 
 Resumable upload, streamed from disk — never buffered as base64 in any
 argument, which is what removes the payload-size ceiling that broke the
@@ -223,12 +225,14 @@ Environment requirements).
   candidates: 11 accept, 32 needs_review, 443 reject, 0 errors) was never
   uploaded to Drive and was lost when the session ended. Fixed by
   decoupling the upload step from the Discord step's outcome (see step 5
-  above). The underlying `discord.com` egress block is still unresolved —
-  either the environment's egress policy needs `discord.com` allowed, or
-  Discord delivery for this routine needs a different path entirely (e.g.
-  bridging through the already-working GitHub Actions webhook delivery
-  used by `pr-digest.yml`, which runs in a different, unrestricted network
-  environment). Not yet decided.
+  above). **Resolved, 2026-08-02**: rather than resolve the `discord.com`
+  egress block itself, notification delivery for this routine moved to
+  Slack, bridged through the already-working GitHub Actions webhook
+  delivery pattern used by `pr-digest.yml` (which runs in a different,
+  unrestricted network environment) — see step 4. Whether this sandbox's
+  egress policy would have allowed `hooks.slack.com` directly was never
+  tested, since the relay-via-Actions design sidesteps the question
+  either way.
 - **Separate real incident, discovered 2026-07-14, fixed same day**: with
   the (now-replaced) MCP-connector transport, the live trigger's
   `mcp_connections` had a `Google-Drive` connector attached, but

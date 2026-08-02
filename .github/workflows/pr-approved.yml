@@ -1,10 +1,10 @@
 name: PR Approved
 
-# Posts a Discord notification the moment a PR is approved, complementing
+# Posts a Slack notification the moment a PR is approved, complementing
 # pr-digest.yml's daily rollup with immediate feedback -- same shared
-# posting helpers (automation/ci/discord.py) as digest-relay and pr-digest.
+# posting helpers (automation/ci/slack.py) as digest-relay and pr-digest.
 #
-# DISCORD_WEBHOOK_URL is a repository secret, never referenced as a
+# SLACK_WEBHOOK_URL is a repository secret, never referenced as a
 # literal value anywhere in this file or logged -- GitHub redacts secret
 # values from workflow logs automatically.
 
@@ -32,7 +32,7 @@ jobs:
 
       - name: Post approval notification
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           export PR_JSON=$(jq -c '{number: .pull_request.number, title: .pull_request.title, url: .pull_request.html_url}' "$GITHUB_EVENT_PATH")
           export REVIEW_JSON=$(jq -c '.review' "$GITHUB_EVENT_PATH")
