@@ -588,6 +588,8 @@ async def proxy_chat_completions(
                 else None
             )
             directive = phase_directive(signal_result.phase, {}, slug)
+            if signal_result.workflow_system_prose:
+                directive = "\n\n".join([directive, signal_result.workflow_system_prose.strip()])
             new_msgs = inject_into_openai_system_prompt(
                 current.messages, directive, phase=signal_result.phase
             )

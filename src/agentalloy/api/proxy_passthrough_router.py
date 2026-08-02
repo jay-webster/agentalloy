@@ -301,6 +301,8 @@ async def _maybe_inject(
     if signal.phase is not None:
         slug = Path(signal.current_contract).stem if signal.current_contract else None
         directive = phase_directive(signal.phase, {}, slug)
+        if signal.workflow_system_prose:
+            directive = "\n\n".join([directive, signal.workflow_system_prose.strip()])
         prompted = inject_into_anthropic_system_prompt(current, directive, phase=signal.phase)
         if prompted is not current:
             current = prompted

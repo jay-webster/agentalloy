@@ -434,6 +434,74 @@ class TestEvaluateSignal:
         assert result.current_contract is None
 
 
+class TestWorkflowSystemProse:
+    """`workflow_system_prose` rides the per-turn system-prompt seam on every
+    carrier turn, independent of `announce`/`should_compose` — the fix for the
+    deliver-once bug where `workflow_prose` (Tier 1, announce-gated) vanished
+    for the rest of the phase after the first turn."""
+
+    def test_populated_on_announce_turn(self, tmp_path: Path) -> None:
+        _set_phase(tmp_path, "build")  # entry → Tier 1 announce
+        with (
+            mock.patch(
+                "agentalloy.api.proxy_signal._load_workflow_skill_for_phase",
+                return_value=_skill(["test"], raw_prose="Build: work tasks.md top to bottom."),
+            ),
+            mock.patch(
+                "agentalloy.api.proxy_signal.check_transition_trigger",
+                return_value=None,
+            ),
+        ):
+            result = asyncio.run(evaluate_signal(_req("run tests"), tmp_path, session_id=SESSION))
+        assert result.should_compose is True
+        assert result.announce is True
+        assert result.workflow_system_prose == "Build: work tasks.md top to bottom."
+
+    def test_still_populated_on_quiet_steady_state_turn(self, tmp_path: Path) -> None:
+        """The regression this guards: a carrier session already oriented (quiet,
+        should_compose=False) must still carry the raw prose, so the widened
+        system-prompt injector keeps delivering it every turn instead of only once."""
+        _set_phase(tmp_path, "build")
+        _set_announced(tmp_path, "build")
+        with (
+            mock.patch(
+                "agentalloy.api.proxy_signal._load_workflow_skill_for_phase",
+                return_value=_skill(["deploy"], raw_prose="Build: work tasks.md top to bottom."),
+            ),
+            mock.patch(
+                "agentalloy.api.proxy_signal.check_transition_trigger",
+                return_value=None,
+            ),
+        ):
+            result = asyncio.run(
+                evaluate_signal(_req("just writing code"), tmp_path, session_id=SESSION)
+            )
+        assert result.should_compose is False
+        assert result.announce is False
+        assert result.workflow_system_prose == "Build: work tasks.md top to bottom."
+
+    def test_none_for_non_carrier_request(self, tmp_path: Path) -> None:
+        """No identifiable session (no header, no fingerprint-able user text) →
+        not a carrier → no workflow prose to inject anywhere."""
+        _set_phase(tmp_path, "build")
+        req = ProxyRequest(
+            model="gpt-4",
+            messages=[ProxyMessage(role="system", content="helpful")],
+        )
+        with (
+            mock.patch(
+                "agentalloy.api.proxy_signal._load_workflow_skill_for_phase",
+                return_value=_skill(["test"], raw_prose="Build: work tasks.md top to bottom."),
+            ),
+            mock.patch(
+                "agentalloy.api.proxy_signal.check_transition_trigger",
+                return_value=None,
+            ),
+        ):
+            result = asyncio.run(evaluate_signal(req, tmp_path))
+        assert result.workflow_system_prose is None
+
+
 class TestAnnounceCadence:
     """The `.agentalloy/announced` marker governs re-announcement across entries."""
 
