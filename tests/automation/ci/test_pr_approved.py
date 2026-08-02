@@ -36,10 +36,10 @@ def test_format_approval_notice_degrades_gracefully_on_missing_reviewer() -> Non
 def test_main_posts_single_message_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PR_JSON", json.dumps(_pr()))
     monkeypatch.setenv("REVIEW_JSON", json.dumps({"user": {"login": "jay-webster"}}))
-    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.example/webhook")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.example/webhook")
     posted = []
     monkeypatch.setattr(
-        pr_approved, "post_to_discord", lambda message, webhook_url: posted.append(message)
+        pr_approved, "post_to_slack", lambda message, webhook_url: posted.append(message)
     )
 
     exit_code = pr_approved.main()
@@ -56,14 +56,14 @@ def test_main_empty_webhook_url_skips_gracefully(
 ) -> None:
     monkeypatch.setenv("PR_JSON", json.dumps(_pr()))
     monkeypatch.setenv("REVIEW_JSON", json.dumps({"user": {"login": "jay-webster"}}))
-    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "")
     called = False
 
     def _fail_if_called(message: str, webhook_url: str) -> None:
         nonlocal called
         called = True
 
-    monkeypatch.setattr(pr_approved, "post_to_discord", _fail_if_called)
+    monkeypatch.setattr(pr_approved, "post_to_slack", _fail_if_called)
 
     exit_code = pr_approved.main()
 
@@ -77,7 +77,7 @@ def test_main_missing_env_returns_nonzero_with_diagnostic(
 ) -> None:
     monkeypatch.delenv("PR_JSON", raising=False)
     monkeypatch.delenv("REVIEW_JSON", raising=False)
-    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
 
     exit_code = pr_approved.main()
     stderr = capsys.readouterr().err

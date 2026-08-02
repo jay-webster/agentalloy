@@ -1,7 +1,7 @@
-"""Posts a Discord notification the moment a PR is approved.
+"""Posts a Slack notification the moment a PR is approved.
 
 Complements pr_digest.py's daily rollup with immediate feedback. Uses the
-same shared posting helpers from automation/ci/discord.py -- no duplicated
+same shared posting helpers from automation/ci/slack.py -- no duplicated
 chunking/webhook logic.
 """
 
@@ -12,7 +12,7 @@ import os
 import sys
 from typing import Any
 
-from automation.ci.discord import post_to_discord
+from automation.ci.slack import post_to_slack
 
 __all__ = ["format_approval_notice", "main"]
 
@@ -26,12 +26,12 @@ def main() -> int:
     try:
         pr = json.loads(os.environ["PR_JSON"])
         review = json.loads(os.environ["REVIEW_JSON"])
-        webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
+        webhook_url = os.environ["SLACK_WEBHOOK_URL"]
         if not webhook_url:
-            print("DISCORD_WEBHOOK_URL is not set -- skipping notification.")
+            print("SLACK_WEBHOOK_URL is not set -- skipping notification.")
             return 0
         message = format_approval_notice(pr, review)
-        post_to_discord(message, webhook_url)
+        post_to_slack(message, webhook_url)
     except Exception as exc:  # noqa: BLE001 -- always surface a clear diagnostic
         print(f"pr-approved failed: {exc}", file=sys.stderr)
         return 1

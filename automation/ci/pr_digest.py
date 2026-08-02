@@ -1,8 +1,8 @@
-"""Posts a scheduled Discord digest of PR activity for this repo.
+"""Posts a scheduled Slack digest of PR activity for this repo.
 
 A pure formatting function buckets PRs into opened/merged/still-open;
-one isolated impure function posts the result to a Discord webhook.
-No dependency on automation-discord-notify's candidate-evaluation digest
+one isolated impure function posts the result to a Slack webhook.
+No dependency on automation-slack-notify's candidate-evaluation digest
 -- different data source, different trigger, different concern.
 """
 
@@ -18,12 +18,12 @@ import sys
 import urllib.request  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from typing import Any
 
-from automation.ci.discord import DISCORD_MESSAGE_LIMIT, chunk_message, post_to_discord
+from automation.ci.slack import SLACK_MESSAGE_LIMIT, chunk_message, post_to_slack
 
 __all__ = [
-    "DISCORD_MESSAGE_LIMIT",
+    "SLACK_MESSAGE_LIMIT",
     "chunk_message",
-    "post_to_discord",
+    "post_to_slack",
     "format_digest",
     "main",
 ]
@@ -60,19 +60,19 @@ def format_digest(prs: list[dict[str, Any]], since: str) -> str:
 def main() -> int:
     try:
         since = os.environ["SINCE"]
-        webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
+        webhook_url = os.environ["SLACK_WEBHOOK_URL"]
         if not webhook_url:
-            # DISCORD_WEBHOOK_URL is always passed (secrets.DISCORD_WEBHOOK_URL),
+            # SLACK_WEBHOOK_URL is always passed (secrets.SLACK_WEBHOOK_URL),
             # but resolves to an empty string, not a missing key, before Jay sets
             # the secret -- a graceful skip avoids daily failure noise on a
             # schedule that starts running the moment this ships, well before
             # the live-proof step that provisions the real secret.
-            print("DISCORD_WEBHOOK_URL is not set -- skipping digest.")
+            print("SLACK_WEBHOOK_URL is not set -- skipping digest.")
             return 0
         prs = json.loads(sys.stdin.read())
         message = format_digest(prs, since)
         for chunk in chunk_message(message):
-            post_to_discord(chunk, webhook_url)
+            post_to_slack(chunk, webhook_url)
     except Exception as exc:  # noqa: BLE001 -- always surface a clear diagnostic
         print(f"pr-digest failed: {exc}", file=sys.stderr)
         return 1

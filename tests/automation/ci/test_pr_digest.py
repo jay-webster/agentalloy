@@ -144,7 +144,7 @@ def test_chunk_message_never_breaks_a_line_mid_entry() -> None:
     assert reconstructed == message
 
 
-def test_post_to_discord_sends_content_field_to_webhook_url(
+def test_post_to_slack_sends_text_field_to_webhook_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured = {}
@@ -167,18 +167,18 @@ def test_post_to_discord_sends_content_field_to_webhook_url(
 
     monkeypatch.setattr(pr_digest.urllib.request, "urlopen", _fake_urlopen)
 
-    pr_digest.post_to_discord("hello digest", "https://discord.example/webhook")
+    pr_digest.post_to_slack("hello digest", "https://hooks.slack.example/webhook")
 
-    assert captured["url"] == "https://discord.example/webhook"
-    assert captured["body"] == {"content": "hello digest"}
+    assert captured["url"] == "https://hooks.slack.example/webhook"
+    assert captured["body"] == {"text": "hello digest"}
     assert captured["headers"].get("user-agent", "").startswith("Python-urllib") is False
 
 
 def test_main_returns_zero_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SINCE", "2026-07-11T00:00:00Z")
-    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.example/webhook")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.example/webhook")
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps([_pr(number=1, state="OPEN")])))
-    monkeypatch.setattr(pr_digest, "post_to_discord", lambda message, webhook_url: None)
+    monkeypatch.setattr(pr_digest, "post_to_slack", lambda message, webhook_url: None)
 
     exit_code = pr_digest.main()
 
@@ -187,7 +187,7 @@ def test_main_returns_zero_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_main_posts_multiple_chunks_for_a_long_digest(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SINCE", "2020-01-01T00:00:00Z")
-    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.example/webhook")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.example/webhook")
     many_prs = [
         _pr(
             number=i,
@@ -199,21 +199,21 @@ def test_main_posts_multiple_chunks_for_a_long_digest(monkeypatch: pytest.Monkey
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(many_prs)))
     posted = []
     monkeypatch.setattr(
-        pr_digest, "post_to_discord", lambda message, webhook_url: posted.append(message)
+        pr_digest, "post_to_slack", lambda message, webhook_url: posted.append(message)
     )
 
     exit_code = pr_digest.main()
 
     assert exit_code == 0
     assert len(posted) > 1
-    assert all(len(chunk) <= pr_digest.DISCORD_MESSAGE_LIMIT for chunk in posted)
+    assert all(len(chunk) <= pr_digest.SLACK_MESSAGE_LIMIT for chunk in posted)
 
 
 def test_main_empty_webhook_url_skips_gracefully(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("SINCE", "2026-07-11T00:00:00Z")
-    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "")
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "")
     monkeypatch.setattr("sys.stdin", io.StringIO("[]"))
     called = False
 
@@ -221,7 +221,7 @@ def test_main_empty_webhook_url_skips_gracefully(
         nonlocal called
         called = True
 
-    monkeypatch.setattr(pr_digest, "post_to_discord", _fail_if_called)
+    monkeypatch.setattr(pr_digest, "post_to_slack", _fail_if_called)
 
     exit_code = pr_digest.main()
 
@@ -234,7 +234,7 @@ def test_main_missing_env_var_returns_nonzero_with_diagnostic(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("SINCE", raising=False)
-    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
     monkeypatch.setattr("sys.stdin", io.StringIO("[]"))
 
     exit_code = pr_digest.main()

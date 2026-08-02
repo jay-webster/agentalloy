@@ -1,17 +1,18 @@
-name: Discord Digest Relay
+name: Slack Digest Relay
 
 # Bridges scheduled-drive-sync.md's routine (which runs in a sandbox with no
-# egress to discord.com) to Discord: the routine fires a repository_dispatch
-# event carrying the pre-formatted report, and this workflow -- running on
-# ubuntu-latest with unrestricted egress -- relays it to Discord.
+# egress to discord.com, now retargeted at Slack) to Slack: the routine fires
+# a repository_dispatch event carrying the pre-formatted report, and this
+# workflow -- running on ubuntu-latest with unrestricted egress -- relays it
+# to Slack.
 #
-# DISCORD_WEBHOOK_URL is a repository secret, never referenced as a literal
+# SLACK_WEBHOOK_URL is a repository secret, never referenced as a literal
 # value anywhere in this file or logged -- GitHub redacts secret values from
 # workflow logs automatically.
 
 on:
   repository_dispatch:
-    types: [discord-digest]
+    types: [slack-digest]
 
 permissions:
   contents: read
@@ -30,8 +31,8 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Relay report to Discord
+      - name: Relay report to Slack
         env:
           REPORT: ${{ github.event.client_payload.report }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: uv run python -m automation.ci.discord_relay
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: uv run python -m automation.ci.slack_relay
