@@ -46,9 +46,8 @@ with `403 storageQuotaExceeded`.
 
 Set three values in the `RemoteTrigger` routine's own config — never
 committed to this repo, never typed or entered by an interactive Claude
-session, same bar as `GH_DISPATCH_TOKEN` and the Discord webhook URL
-(`docs/spec/automation-discord-relay.md`'s equivalent framing for its own
-credential):
+session, same bar as `SLACK_WEBHOOK_URL` (`automation/routines/
+scheduled-drive-sync.md`'s equivalent framing for its own credential):
 
 - `DRIVE_SERVICE_ACCOUNT_EMAIL` — the JSON key's `client_email` field.
 - `DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY` — the JSON key's `private_key` field,

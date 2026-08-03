@@ -10,7 +10,7 @@ routine exists at all).
 
 ## Environment requirements
 
-Requires three pieces of routine-only config, provisioned by Jay per
+Requires four pieces of routine-only config, provisioned by Jay per
 `automation/docs/drive-sync-credential-setup.md` — never committed to this
 repo and never typed or entered by an interactive Claude session:
 
@@ -24,10 +24,13 @@ repo and never typed or entered by an interactive Claude session:
   account's email, role Content Manager. Must be a Shared Drive, not a
   folder in a personal My Drive — see Notes, "Storage quota, discovered
   2026-07-15".
+- `SLACK_WEBHOOK_URL` — the same Slack incoming-webhook URL used by this
+  repo's own CI notifications (`pr-digest.yml`, `pr-approved.yml`).
 
 Also requires `openssl`, `curl`, and `jq` on the routine's runner (all
-standard on `ubuntu-latest`-class environments; no new dependency beyond
-what `slack-digest-relay.yml` already assumes for step 5).
+standard on `ubuntu-latest`-class environments), plus `uv`/Python for the
+`automation.cli` and `automation.ci.slack_relay` invocations already used
+elsewhere in this routine.
 
 ## Obtaining a Drive access token
 
@@ -128,44 +131,35 @@ Then follow `automation/routines/evaluate-candidate.md` (unchanged,
 referenced here rather than duplicated) against `uv run python -m
 automation.cli ingest list --status new`.
 
-## 4. Relay the report to Slack via GitHub (best-effort — never blocks step 5)
+## 4. Relay the report to Slack (best-effort — never blocks step 5)
 
-Run:
-
-```
-uv run python -m automation.cli ingest report --since "$SINCE"
-```
-
-This environment's network egress policy is confirmed to block
-`discord.com` directly (see Notes) — whether `hooks.slack.com` is
-reachable from this same sandbox is unverified, so as a conservative
-default the report continues to be relayed through a GitHub Actions
-workflow (`slack-digest-relay.yml`, running on `ubuntu-latest`, which has
-unrestricted egress) rather than posted to Slack directly from here.
-Dispatch it with a `repository_dispatch` event, authenticated with
-`GH_DISPATCH_TOKEN` (routine-only config, provisioned by Jay — never
-committed to this repo and never typed or entered by Claude):
+Post the report directly to `hooks.slack.com` — confirmed reachable from
+this sandbox (see Notes, "GitHub-relay retired, 2026-08-03") — using the
+same shared chunking/posting module `pr-digest.yml` and `pr-approved.yml`
+already rely on, rather than hand-building the HTTP call:
 
 ```
-jq -n --arg report "$(uv run python -m automation.cli ingest report --since "$SINCE")" '{event_type: "slack-digest", client_payload: {report: $report}}' \
-  | curl -sS -X POST \
-      -H "Authorization: Bearer $GH_DISPATCH_TOKEN" \
-      -H "Accept: application/vnd.github+json" \
-      -H "Content-Type: application/json" \
-      -d @- "https://api.github.com/repos/jay-webster/agentalloy/dispatches"
+REPORT="$(uv run python -m automation.cli ingest report --since "$SINCE")" \
+  SLACK_WEBHOOK_URL="$SLACK_WEBHOOK_URL" \
+  uv run python -m automation.ci.slack_relay
 ```
 
-The `jq -n --arg` step correctly JSON-escapes the digest text (newlines,
-quotes) — don't hand-build the JSON payload string directly.
+`automation/ci/slack_relay.py` reads `REPORT`/`SLACK_WEBHOOK_URL` from the
+environment, chunks the text via `automation/ci/slack.py`'s
+`chunk_message` (so no single POST exceeds Slack's practical message
+size), and posts each chunk. It exits `0` and prints a message rather than
+failing if `SLACK_WEBHOOK_URL` is unset, and exits non-zero with a
+diagnostic on stderr for any other failure (auth, network, malformed
+response).
 
-**If this `curl` fails for any reason (including an auth or network
-failure — the same class of real, confirmed failure mode that used to
-hit `discord.com` directly, not hypothetical), do not stop the routine
-and do not skip step 5.** Note the failure in the final report and
-continue. A notification delivery failure says nothing about whether the
-evaluation data itself is valid — gating persistence on it was a real bug
-(see Notes) that lost a full run's evaluations (486 candidates) the first
-time this environment's egress policy actually blocked the request.
+**If this fails for any reason (including an auth or network failure —
+the same class of real, confirmed failure mode that used to hit
+`discord.com` directly, not hypothetical), do not stop the routine and do
+not skip step 5.** Note the failure in the final report and continue. A
+notification delivery failure says nothing about whether the evaluation
+data itself is valid — gating persistence on it was a real bug (see
+Notes) that lost a full run's evaluations (486 candidates) the first time
+this environment's egress policy actually blocked the request.
 
 ## 5. Upload the candidate store back to Drive
 
@@ -234,6 +228,22 @@ Environment requirements).
   egress policy would have allowed `hooks.slack.com` directly was never
   tested, since the relay-via-Actions design sidesteps the question
   either way.
+- **GitHub-relay retired, 2026-08-03**: the `repository_dispatch` relay
+  above (fixed for a `Content-Type` 403 on 2026-08-03) hit a second,
+  different 403 on its very next verification run —
+  `repository_dispatch is not permitted for this session type`, whose
+  `documentation_url` pointed at Anthropic's own generic GitHub Actions
+  setup docs rather than anything GitHub-specific. That page doesn't
+  mention any such restriction; this reads as an undocumented
+  platform-level limit on scheduled routine sessions calling
+  `repository_dispatch`, not fixable by changing the token, the curl
+  invocation, or the network allowlist. Since this environment's network
+  allowlist already includes `hooks.slack.com` (confirmed directly
+  reachable — the same domain Upstream Reconciliation's routine has
+  always posted to without a relay), the GitHub-Actions-relay indirection
+  is no longer justified by anything. Retired it: step 4 now posts to
+  Slack directly via `automation/ci/slack_relay.py`, and
+  `slack-digest-relay.yml`/`GH_DISPATCH_TOKEN` are gone.
 - **Separate real incident, discovered 2026-07-14, fixed same day**: with
   the (now-replaced) MCP-connector transport, the live trigger's
   `mcp_connections` had a `Google-Drive` connector attached, but
