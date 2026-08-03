@@ -151,6 +151,7 @@ jq -n --arg report "$(uv run python -m automation.cli ingest report --since "$SI
   | curl -sS -X POST \
       -H "Authorization: Bearer $GH_DISPATCH_TOKEN" \
       -H "Accept: application/vnd.github+json" \
+      -H "Content-Type: application/json" \
       -d @- "https://api.github.com/repos/jay-webster/agentalloy/dispatches"
 ```
 
