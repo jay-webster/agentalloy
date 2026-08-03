@@ -1,9 +1,10 @@
 # Routine: scan-slack-links
 
-Followed by an agent with Slack MCP access (`claude.ai Slack`) — an
-interactive Claude Code session today; potentially a `CronCreate`-scheduled
-agent later. Every step below is literal — no judgment calls beyond reading
-matched message content to fill in the extracted fields.
+Followed by an agent with Slack MCP access (`claude.ai Slack`) — either an
+interactive Claude Code session, or a `RemoteTrigger` scheduled routine
+whose environment starts from a fresh git clone every run (same model as
+`scheduled-drive-sync.md`). Every step below is literal — no judgment calls
+beyond reading matched message content to fill in the extracted fields.
 
 ## 1. Get the cursor
 
@@ -17,11 +18,20 @@ value; it's the low-water mark for step 3.
 
 ## 2. Fetch messages
 
-Read `channel_id` and `author_user_id` from `automation/config/slack.yaml`
-(local, gitignored — not committed to this repo). Call `slack_read_channel`
-for that `channel_id` with a `limit` of 100 — enough to cover any reasonable
-gap between scans. This returns messages newest-first; each message has
-`ts`, `user`, and `text` fields (standard Slack message shape).
+Get `channel_id` and `author_user_id` first from `automation/config/slack.yaml`
+if it exists (local, gitignored — not committed to this repo; present in an
+interactive session's checkout). If that file doesn't exist (a scheduled
+`RemoteTrigger` run's fresh clone never has it), use the `channel_id` and
+`author_user_id` given directly in this routine's own trigger prompt instead
+— neither value is a secret (a Slack channel ID and a Slack user ID, not a
+credential), so they're provided inline in the scheduled trigger's config
+rather than requiring routine-only env vars the way `scheduled-drive-sync.md`
+does for its actual credentials.
+
+Call `slack_read_channel` for that `channel_id` with a `limit` of 100 —
+enough to cover any reasonable gap between scans. This returns messages
+newest-first; each message has `ts`, `user`, and `text` fields (standard
+Slack message shape).
 
 ## 3. Filter to Jay's messages newer than the cursor
 
