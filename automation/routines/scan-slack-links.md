@@ -6,6 +6,79 @@ whose environment starts from a fresh git clone every run (same model as
 `scheduled-drive-sync.md`). Every step below is literal — no judgment calls
 beyond reading matched message content to fill in the extracted fields.
 
+## Environment requirements
+
+Like `scheduled-drive-sync.md`, this routine round-trips its candidate store
+through Drive so URLs found in one hourly run survive into the next (and
+into the daily Drive Sync digest). Requires the same routine-only config,
+provisioned by Jay per `automation/docs/drive-sync-credential-setup.md`:
+
+- `DRIVE_SERVICE_ACCOUNT_EMAIL`
+- `DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY`
+- `DRIVE_FOLDER_ID`
+
+Plus `openssl`, `curl`, and `jq` on the routine's runner. See
+`scheduled-drive-sync.md`'s own Environment requirements section for the
+exact formatting rules for these values — not repeated here.
+
+## 0. Obtain a Drive access token, then download the candidate store
+
+Same recipe as `scheduled-drive-sync.md`'s "Obtaining a Drive access token"
+and step 1, scoped to just the candidates file (this routine has no
+newsletter export to fetch):
+
+```
+NOW=$(date +%s)
+EXP=$((NOW + 3600))
+
+b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
+
+JWT_HEADER=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+JWT_CLAIMS=$(jq -nc \
+  --arg iss "$DRIVE_SERVICE_ACCOUNT_EMAIL" \
+  --arg scope "https://www.googleapis.com/auth/drive.file" \
+  --arg aud "https://oauth2.googleapis.com/token" \
+  --argjson iat "$NOW" --argjson exp "$EXP" \
+  '{iss: $iss, scope: $scope, aud: $aud, iat: $iat, exp: $exp}' | b64url)
+
+JWT_UNSIGNED="${JWT_HEADER}.${JWT_CLAIMS}"
+JWT_SIGNATURE=$(printf '%s' "$JWT_UNSIGNED" \
+  | openssl dgst -sha256 -sign <(printf '%b' "$DRIVE_SERVICE_ACCOUNT_PRIVATE_KEY") \
+  | b64url)
+JWT="${JWT_UNSIGNED}.${JWT_SIGNATURE}"
+
+ACCESS_TOKEN=$(curl -sS -X POST https://oauth2.googleapis.com/token \
+  -d grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer \
+  -d assertion="$JWT" | jq -r '.access_token')
+```
+
+```
+find_file() {  # $1 = well-known name
+  curl -sS -G https://www.googleapis.com/drive/v3/files \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    --data-urlencode "q=\"$DRIVE_FOLDER_ID\" in parents and name = '$1' and trashed = false" \
+    --data-urlencode "fields=files(id)" \
+    --data-urlencode "supportsAllDrives=true" \
+    --data-urlencode "includeItemsFromAllDrives=true" \
+    | jq -r '.files[0].id // empty'
+}
+
+download_file() {  # $1 = file id, $2 = local path
+  curl -sS -o "$2" -H "Authorization: Bearer $ACCESS_TOKEN" \
+    "https://www.googleapis.com/drive/v3/files/$1?alt=media&supportsAllDrives=true"
+}
+
+mkdir -p .automation
+CANDIDATES_FILE_ID=$(find_file agentalloy-automation-candidates.db)
+if [ -n "$CANDIDATES_FILE_ID" ]; then
+  download_file "$CANDIDATES_FILE_ID" .automation/candidates.db
+fi
+```
+
+If `agentalloy-automation-candidates.db` isn't found (the very first run
+ever), proceed with no local file — `CandidateStore` creates the schema
+itself on first use.
+
 ## 1. Get the cursor
 
 ```
@@ -100,3 +173,39 @@ retry safe (already-added URLs no-op rather than duplicate).
 Report: candidates added, already-present skips, per-message cap skips
 (URLs beyond the 5-per-message cap), and per-run cap skips (URLs beyond the
 20-per-run cap after it was reached).
+
+## 8. Upload the candidate store back to Drive
+
+Same resumable-upload recipe as `scheduled-drive-sync.md`'s step 5, scoped
+to just the candidates file. Run this even if step 3 short-circuited to a
+zero-activity report — the upload is then a safe no-op / overwrite with
+identical content:
+
+```
+if [ -n "$CANDIDATES_FILE_ID" ]; then
+  LOCATION=$(curl -sS -X PATCH \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    "https://www.googleapis.com/upload/drive/v3/files/$CANDIDATES_FILE_ID?uploadType=resumable&supportsAllDrives=true" \
+    -D - -o /dev/null | grep -i '^location:' | tr -d '\r' | cut -d' ' -f2-)
+else
+  LOCATION=$(curl -sS -X POST \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: application/json; charset=UTF-8" \
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true" \
+    -d "{\"name\": \"agentalloy-automation-candidates.db\", \"parents\": [\"$DRIVE_FOLDER_ID\"]}" \
+    -D - -o /dev/null | grep -i '^location:' | tr -d '\r' | cut -d' ' -f2-)
+fi
+
+curl -sS -T .automation/candidates.db "$LOCATION"
+```
+
+## Notes
+
+- This routine and `scheduled-drive-sync.md` both read-modify-write the
+  same Drive-hosted `candidates.db`, and land only ~11 minutes apart on the
+  day Drive Sync runs (`23 * * * *` vs `12 11 * * *`). An overlapping write
+  could clobber the other's changes if either run ever took longer than
+  that gap. Accepted as a low-probability risk rather than adding
+  locking/retry logic — consistent with this codebase's pattern of fixing
+  real incidents as they occur (see `scheduled-drive-sync.md`'s own Notes)
+  rather than pre-engineering for a narrow, unconfirmed race.
