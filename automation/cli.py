@@ -7,7 +7,7 @@ import datetime
 import json
 import sys
 
-from automation import link_extract
+from automation import link_extract, review_queue
 from automation.store import (
     VALID_VERDICTS,
     Candidate,
@@ -214,6 +214,28 @@ def _cmd_evaluate_batch(args: argparse.Namespace, store: CandidateStore) -> int:
     return 0
 
 
+def _cmd_queue_verdict(args: argparse.Namespace, store: CandidateStore) -> int:
+    review_queue.append(args.message_id, args.verdict, args.rationale)
+    print(f"queued {args.message_id}: {args.verdict}")
+    return 0
+
+
+def _cmd_queue_list(args: argparse.Namespace, store: CandidateStore) -> int:
+    rows = review_queue.list_pending()
+    if not rows:
+        print("nothing pending")
+        return 0
+    for row in rows:
+        print(f"{row['message_id']}\t{row['verdict']}\t{row['rationale']}")
+    return 0
+
+
+def _cmd_queue_clear(args: argparse.Namespace, store: CandidateStore) -> int:
+    review_queue.clear()
+    print("queue cleared")
+    return 0
+
+
 def _format_candidate(c: Candidate) -> str:
     return f"- {c.message_id} | {c.source} | {c.subject}\n  {c.rationale}"
 
@@ -338,6 +360,20 @@ def build_parser() -> argparse.ArgumentParser:
     slack_cursor_set_parser = slack_cursor_sub.add_parser("set", help="Set the cursor")
     slack_cursor_set_parser.add_argument("--message-id", required=True)
     slack_cursor_set_parser.set_defaults(func=_cmd_slack_cursor_set)
+
+    queue_verdict_parser = ingest_sub.add_parser(
+        "queue-verdict", help="Queue a verdict for later application to candidates.db"
+    )
+    queue_verdict_parser.add_argument("--message-id", required=True)
+    queue_verdict_parser.add_argument("--verdict", required=True, choices=sorted(VALID_VERDICTS))
+    queue_verdict_parser.add_argument("--rationale", required=True)
+    queue_verdict_parser.set_defaults(func=_cmd_queue_verdict)
+
+    queue_list_parser = ingest_sub.add_parser("queue-list", help="List pending queued verdicts")
+    queue_list_parser.set_defaults(func=_cmd_queue_list)
+
+    queue_clear_parser = ingest_sub.add_parser("queue-clear", help="Clear pending queued verdicts")
+    queue_clear_parser.set_defaults(func=_cmd_queue_clear)
 
     return parser
 
