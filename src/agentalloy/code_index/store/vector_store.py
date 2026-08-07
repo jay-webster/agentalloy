@@ -60,6 +60,26 @@ def _opt_int(v: object) -> int | None:
     return int(v) if isinstance(v, int) else None
 
 
+def _open_or_create_table(
+    db: lancedb.DBConnection, name: str, schema: pa.Schema
+) -> lancedb.table.Table:
+    """Open-or-create, recovering from a schema-drifted existing table.
+
+    ``exist_ok=True`` opens the existing table when present, but raises if its
+    schema differs from ``schema`` (e.g. a dataset created before a column was
+    added). That's a genuinely incompatible/stale dataset — not worth trying to
+    migrate in place, so drop and recreate fresh.
+    """
+    try:
+        return db.create_table(name, schema=schema, exist_ok=True)
+    except Exception as e:
+        if "schema" not in str(e).lower():
+            raise
+        logger.warning("table %r schema drift (%s); dropping and recreating", name, e)
+        db.drop_table(name)
+        return db.create_table(name, schema=schema)
+
+
 class LanceCodeVectorStore:
     """CodeVectorStore backed by a LanceDB dataset (one per repo slug)."""
 
@@ -69,9 +89,7 @@ class LanceCodeVectorStore:
         # wants the parent dir and a table name whose .lance dir is that path.
         self._db = lancedb.connect(str(p.parent))
         self._table_name = p.stem  # "vectors"
-        self._table = self._db.create_table(
-            self._table_name, schema=CODE_VECTORS_SCHEMA, exist_ok=True
-        )
+        self._table = _open_or_create_table(self._db, self._table_name, CODE_VECTORS_SCHEMA)
         self._has_vector_index = self._vector_index_present()
 
     # -- internal ------------------------------------------------------------

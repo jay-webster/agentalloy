@@ -7,10 +7,12 @@ test-porting step.
 
 from __future__ import annotations
 
+import lancedb
+import pyarrow as pa
 import pytest
 
 from agentalloy.storage import EMBEDDING_DIM, EmbeddingDimMismatch, FragmentEmbedding
-from agentalloy.storage.fragment_store import LanceFragmentStore
+from agentalloy.storage.fragment_store import FRAGMENTS_SCHEMA, LanceFragmentStore
 
 DIM = EMBEDDING_DIM
 
@@ -82,6 +84,23 @@ def test_domain_tags_filter(store):
 
     none_tagged = store.search_similar(_vec(0.0), domain_tags=["security"], k=10)
     assert all(h.fragment_id not in {"f2", "f5"} for h in none_tagged)
+
+
+def test_schema_drift_recovery(tmp_path):
+    """A dataset created before ``domain_tags`` existed must reopen cleanly,
+    not raise on the ``exist_ok=True`` schema mismatch."""
+    path = tmp_path / "fragments.lance"
+    stale_schema = pa.schema([f for f in FRAGMENTS_SCHEMA if f.name != "domain_tags"])
+    db = lancedb.connect(str(path.parent))
+    db.create_table(path.stem, schema=stale_schema)
+
+    fs = LanceFragmentStore(str(path))
+    try:
+        assert fs._table.schema == FRAGMENTS_SCHEMA
+        fs.insert_embeddings([_frag(0)])
+        assert fs.count_embeddings() == 1
+    finally:
+        fs.close()
 
 
 def test_bm25(store):

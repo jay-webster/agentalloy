@@ -74,6 +74,26 @@ def _arr_list(vals: Sequence[str]) -> str:
     return "[" + ", ".join(_q(v) for v in vals) + "]"
 
 
+def _open_or_create_table(
+    db: lancedb.DBConnection, name: str, schema: pa.Schema
+) -> lancedb.table.Table:
+    """Open-or-create, recovering from a schema-drifted existing table.
+
+    ``exist_ok=True`` opens the existing table when present, but raises if its
+    schema differs from ``schema`` (e.g. a dataset created before a column was
+    added). That's a genuinely incompatible/stale dataset — not worth trying to
+    migrate in place, so drop and recreate fresh.
+    """
+    try:
+        return db.create_table(name, schema=schema, exist_ok=True)
+    except Exception as e:
+        if "schema" not in str(e).lower():
+            raise
+        logger.warning("table %r schema drift (%s); dropping and recreating", name, e)
+        db.drop_table(name)
+        return db.create_table(name, schema=schema)
+
+
 def _build_filter(
     *,
     categories: Sequence[str] | None,
@@ -120,9 +140,8 @@ class LanceFragmentStore:
         # (e.g. a copied/seeded dataset) and creates it from the schema only when
         # absent — avoids relying on a catalog listing that doesn't always see a
         # table copied in out-of-band (the per-test ``corpus_dir`` copytree case).
-        self._table = self._db.create_table(
-            self._table_name, schema=FRAGMENTS_SCHEMA, exist_ok=True
-        )
+        # Recovers from schema drift (e.g. a dataset predating a new column).
+        self._table = _open_or_create_table(self._db, self._table_name, FRAGMENTS_SCHEMA)
         self._has_vector_index = self._vector_index_present()
 
     # -- internal ------------------------------------------------------------
