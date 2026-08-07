@@ -1338,6 +1338,7 @@ class TestContainerFlow:
 
         return mod.SetupConfig, mod.run_setup
 
+    @pytest.mark.container
     def test_container_flow_skips_native_prompts(self, tmp_state_dir: tuple[Path, Path]):
         """Container deployment skips runner/model/hardware prompts."""
         import sys
@@ -1402,6 +1403,7 @@ class TestContainerFlow:
         assert cfg.deployment == "native"
         assert cfg.runtime_binary == ""
 
+    @pytest.mark.container
     def test_container_flow_records_state(self, tmp_state_dir: tuple[Path, Path]):
         """Container setup records deployment, image_tag, runtime_binary in state."""
         SetupConfig, run_setup = self._import_run_setup()
@@ -1458,6 +1460,7 @@ class TestContainerFlow:
         combined = (captured.out + captured.err).lower()
         assert "podman" in combined or "docker" in combined or "compose" in combined
 
+    @pytest.mark.container
     def test_image_tag_path_absolute(self, tmp_state_dir: tuple[Path, Path], tmp_path: Path):
         """cfg.compose_file stored as absolute path, not relative."""
         SetupConfig, run_setup = self._import_run_setup()
@@ -1494,6 +1497,7 @@ class TestContainerFlow:
         # Should be absolute path
         assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
+    @pytest.mark.container
     def test_image_tag_resolved_from_repo_root_not_cwd(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
     ):
@@ -1538,6 +1542,7 @@ class TestContainerFlow:
         st = state_mod.load_state()
         assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
+    @pytest.mark.container
     def test_image_tag_resolved_from_cwd_when_present(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
     ):
@@ -1573,6 +1578,7 @@ class TestContainerFlow:
         st = state_mod.load_state()
         assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
+    @pytest.mark.container
     def test_image_tag_accepts_dockerfile_alternative(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
     ):
@@ -1609,6 +1615,7 @@ class TestContainerFlow:
         # image_tag is always "ghcr.io/jay-webster/agentalloy:latest" regardless of build context
         assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
+    @pytest.mark.container
     def test_interactive_fallback_accepts_directory_path(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
     ):
@@ -1664,6 +1671,7 @@ class TestContainerFlow:
         # image_tag is always "ghcr.io/jay-webster/agentalloy:latest" regardless of build context
         assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
+    @pytest.mark.container
     def test_interactive_fallback_accepts_image_tag_path(
         self, tmp_state_dir: tuple[Path, Path], tmp_path: Path
     ):
@@ -1718,6 +1726,7 @@ class TestContainerFlow:
         # image_tag is always "ghcr.io/jay-webster/agentalloy:latest" regardless of build context
         assert st["image_tag"] == "ghcr.io/jay-webster/agentalloy:latest"
 
+    @pytest.mark.container
     def test_container_cpu_note_shown_to_every_host(
         self, tmp_state_dir: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
     ):
@@ -1756,6 +1765,7 @@ class TestContainerFlow:
         assert "cancel and re-run" not in out
         assert "apple silicon" not in out
 
+    @pytest.mark.container
     def test_container_cpu_only_warning_cancels_on_no(
         self, tmp_state_dir: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
     ):
@@ -1786,6 +1796,7 @@ class TestContainerFlow:
         out = capsys.readouterr().out.lower()
         assert "cancelled" in out
 
+    @pytest.mark.container
     def test_container_env_is_just_runtime_port(self, tmp_state_dir: tuple[Path, Path]):
         """Container .env now contains only RUNTIME_PORT — embedder is internal to compose."""
         SetupConfig, run_setup = self._import_run_setup()
@@ -1819,6 +1830,7 @@ class TestContainerFlow:
         assert "RUNTIME_EMBED_BASE_URL" not in env_text
         assert "RUNTIME_EMBEDDING_MODEL" not in env_text
 
+    @pytest.mark.container
     def test_container_aborts_when_run_fails(
         self, tmp_state_dir: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
     ):
@@ -1867,6 +1879,7 @@ class TestContainerFlow:
     # ------------------------------------------------------------------
     # Skill-pack selection (spec: agentalloy-container-skillpack-selection)
     # ------------------------------------------------------------------
+    @pytest.mark.container
     def test_container_flow_skips_prompt_when_packs_preset(self, tmp_state_dir: tuple[Path, Path]):
         """A preset --packs value must bypass the interactive prompt and
         flow straight through to the container run with packs in env."""
@@ -1923,6 +1936,7 @@ class TestContainerFlow:
         )
         assert not entrypoint_mounted, "host entrypoint.sh must NOT be bind-mounted"
 
+    @pytest.mark.container
     def test_container_flow_non_interactive_no_packs_uses_defaults(
         self, tmp_state_dir: tuple[Path, Path]
     ):
