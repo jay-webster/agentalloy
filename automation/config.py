@@ -42,4 +42,4 @@ def load_sources(path: Path | None = None) -> SourceAllowlist:
     for entry in raw:
         if not isinstance(entry, str):
             raise SourcesConfigInvalid(target, entry)
-    return frozenset(raw)
+    return frozenset[str](raw)
