@@ -8,11 +8,12 @@ lives here — applying a queued verdict is the job of the
 `apply-review-queue` routine, not this module.
 """
 
-from __future__ import annotations
+from __future__ import annotations      
 
 import json
 from pathlib import Path
 
+# pyrefly: ignore [missing-import]
 from automation.store import VALID_VERDICTS
 
 DEFAULT_QUEUE_PATH = Path(".automation") / "review-queue.jsonl"
@@ -32,7 +33,7 @@ def append(
         f.write(json.dumps(row) + "\n")
 
 
-def list_pending(queue_path: Path = DEFAULT_QUEUE_PATH) -> list[dict]:
+def list_pending(queue_path: Path = DEFAULT_QUEUE_PATH) -> list[dict[str, str]]:
     if not queue_path.exists():
         return []
     with queue_path.open() as f:
