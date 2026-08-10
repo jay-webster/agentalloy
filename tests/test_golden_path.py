@@ -24,11 +24,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agentalloy.api.compose_router import get_orchestrator
+from agentalloy.api.deps import (
+    get_compose_orchestrator,
+    get_diagnostics_checker,
+    get_health_checker,
+    get_retrieve_orchestrator,
+    get_skill_store,
+    get_telemetry_store,
+)
 from agentalloy.api.diagnostics_router import DiagnosticsChecker
 from agentalloy.api.health_router import HealthChecker
-from agentalloy.api.retrieve_router import get_retrieve_orchestrator
-from agentalloy.api.skill_router import get_skill_store
 from agentalloy.app import create_app
 from agentalloy.fixtures.loader import load_fixtures
 from agentalloy.lm_client import OpenAICompatClient
@@ -153,12 +158,12 @@ def golden_app(seeded_store: DuckDBSkillStore, tmp_path_factory: pytest.TempPath
     diagnostics_checker = DiagnosticsChecker(seeded_store, runtime, health_checker)
 
     app = create_app(use_default_lifespan=False)
-    app.dependency_overrides[get_orchestrator] = lambda: compose_orch
+    app.dependency_overrides[get_compose_orchestrator] = lambda: compose_orch
     app.dependency_overrides[get_retrieve_orchestrator] = lambda: retrieve_orch
     app.dependency_overrides[get_skill_store] = lambda: seeded_store
-    app.state.health_checker = health_checker
-    app.state.diagnostics_checker = diagnostics_checker
-    app.state.telemetry_store = telemetry_store
+    app.dependency_overrides[get_health_checker] = lambda: health_checker
+    app.dependency_overrides[get_diagnostics_checker] = lambda: diagnostics_checker
+    app.dependency_overrides[get_telemetry_store] = lambda: telemetry_store
     return app
 
 
@@ -280,7 +285,7 @@ def test_compose_trace_written_to_telemetry(golden_app: FastAPI) -> None:
     # Brief pause to let the background drain thread flush.
     time.sleep(0.2)
 
-    telemetry_store = golden_app.state.telemetry_store
+    telemetry_store = golden_app.dependency_overrides[get_telemetry_store]()
     traces = telemetry_store.query_traces(status="compose", limit=1)
 
     assert traces, "no compose trace found in telemetry store"

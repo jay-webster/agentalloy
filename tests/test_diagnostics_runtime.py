@@ -340,9 +340,10 @@ def test_diagnostics_endpoint_with_checker(
     loaded_cache: RuntimeCache,
 ) -> None:
     """AC-1/AC-2: endpoint returns populated consistent diagnostics."""
-    app.state.diagnostics_checker = DiagnosticsChecker(
-        populated_store, loaded_cache, _healthy_checker()
-    )
+    from agentalloy.api import deps
+
+    dc = DiagnosticsChecker(populated_store, loaded_cache, _healthy_checker())
+    app.dependency_overrides[deps.get_diagnostics_checker] = lambda: dc
     with TestClient(app) as c:
         resp = c.get("/diagnostics/runtime")
     assert resp.status_code == 200
@@ -362,6 +363,8 @@ def test_diagnostics_endpoint_stale_cache_detected(
     populated_store: DuckDBSkillStore,
 ) -> None:
     """AC-3: operator can distinguish stale cache via endpoint."""
+    from agentalloy.api import deps
+
     real_skill_rows = populated_store.execute(
         "SELECT s.skill_id FROM skills s "
         "JOIN skill_versions v ON v.version_id = s.current_version_id "
@@ -370,7 +373,8 @@ def test_diagnostics_endpoint_stale_cache_detected(
     skill_id = str(real_skill_rows[0][0])
 
     stale = _stale_cache(populated_store, skill_id)
-    app.state.diagnostics_checker = DiagnosticsChecker(populated_store, stale, _healthy_checker())
+    dc = DiagnosticsChecker(populated_store, stale, _healthy_checker())
+    app.dependency_overrides[deps.get_diagnostics_checker] = lambda: dc
     with TestClient(app) as c:
         resp = c.get("/diagnostics/runtime")
     assert resp.status_code == 200

@@ -204,9 +204,11 @@ class TestReadinessEndpoint:
 
     def test_readiness_with_checker(self, app_with_readiness: FastAPI, tmp_path: Path) -> None:
         """With a ReadinessChecker in app.state, returns its result."""
+        from agentalloy.api import deps
+
         checker = ReadinessChecker(app_dir=tmp_path)
         (tmp_path / ".bootstrap-complete").touch()
-        app_with_readiness.state.readiness_checker = checker
+        app_with_readiness.dependency_overrides[deps.get_readiness_checker] = lambda: checker
 
         with TestClient(app_with_readiness) as c:
             resp = c.get("/readiness")

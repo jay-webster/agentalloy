@@ -12,31 +12,28 @@ service it stopped, and the restart reloads the cache.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def refresh_runtime_cache(app: Any) -> bool:
-    """Best-effort cache reload + swap into the live orchestrators.
+def refresh_runtime_cache() -> bool:
+    """Best-effort cache reload + swap into the live orchestrators."""
+    from agentalloy.api.deps import get_app_resources
+    from agentalloy.runtime_state import load_runtime_cache
 
-    Returns True on success. On any failure (degraded app state, a test app
-    without the default lifespan, a load error) it returns False and the
-    previous cache keeps serving — stale beats dead.
-    """
-    store = getattr(app.state, "store", None)
-    if store is None:
+    try:
+        resources = get_app_resources()
+    except RuntimeError:
+        return False
+    if resources.store is None:
         return False
     try:
-        from agentalloy.runtime_state import load_runtime_cache
-
-        runtime = load_runtime_cache(store)
+        runtime = load_runtime_cache(resources.store)
     except Exception as exc:  # noqa: BLE001 — stale cache beats a dead service
         logger.warning("runtime cache refresh failed — serving the previous cache: %s", exc)
         return False
-    app.state.runtime = runtime
-    for attr in ("compose_orchestrator", "retrieve_orchestrator"):
-        orch = getattr(app.state, attr, None)
+    resources.runtime = runtime
+    for orch in (resources.compose_orchestrator, resources.retrieve_orchestrator):
         if orch is not None:
             orch.rebind_source(runtime)
     logger.info("runtime cache refreshed after in-process corpus write")

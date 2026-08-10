@@ -22,10 +22,12 @@ from agentalloy.storage.telemetry_store import open_telemetry_store
 
 
 def _client(querier: TelemetryQuerier | None) -> TestClient:
+    from agentalloy.api import deps
+
     app = FastAPI()
     app.include_router(router)
     if querier is not None:
-        app.state.telemetry_querier = querier
+        app.dependency_overrides[deps.get_telemetry_querier] = lambda: querier
     return TestClient(app)
 
 

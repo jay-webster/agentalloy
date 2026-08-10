@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agentalloy.api.compose_models import ComposeRequest, EmptyResult
-from agentalloy.api.compose_router import get_orchestrator
+from agentalloy.api.deps import get_compose_orchestrator
 from agentalloy.orchestration.compose import ComposeOrchestrator
 from agentalloy.retrieval.domain import RetrievalResult
 
@@ -32,7 +32,7 @@ class _NoopOrchestrator(ComposeOrchestrator):
 
 
 def _install_noop(app: FastAPI) -> None:
-    app.dependency_overrides[get_orchestrator] = lambda: _NoopOrchestrator()
+    app.dependency_overrides[get_compose_orchestrator] = lambda: _NoopOrchestrator()
 
 
 def test_openapi_exposes_compose_route(client: TestClient) -> None:

@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agentalloy.api.compose_models import ComposeRequest
-from agentalloy.api.compose_router import get_orchestrator
+from agentalloy.api.deps import get_compose_orchestrator
 from agentalloy.orchestration.compose import (
     ComposeOrchestrator,
     RetrievalStageError,
@@ -69,7 +69,7 @@ class _FakeOrchestrator(ComposeOrchestrator):
 
 
 def _install_orchestrator(app: FastAPI, orchestrator: ComposeOrchestrator) -> None:
-    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+    app.dependency_overrides[get_compose_orchestrator] = lambda: orchestrator
 
 
 # -------- AC-1: composed success --------

@@ -33,9 +33,7 @@ def test_queue_verdict_writes_one_line_and_exits_zero(
 
     assert exit_code == 0
     rows = review_queue.list_pending()
-    assert rows == [
-        {"message_id": "url-1", "verdict": "reject", "rationale": "no lens fires"}
-    ]
+    assert rows == [{"message_id": "url-1", "verdict": "reject", "rationale": "no lens fires"}]
 
 
 def test_queue_verdict_invalid_verdict_exits_nonzero_and_writes_nothing(
@@ -121,9 +119,7 @@ def test_queue_clear_then_list_shows_nothing_pending(
 def test_queue_handlers_have_no_drive_or_network_call_sites() -> None:
     cli_path = Path(__file__).resolve().parents[2] / "automation" / "cli.py"
     source = cli_path.read_text()
-    match = re.search(
-        r"def _cmd_queue_verdict.*?(?=\ndef _format_candidate)", source, re.DOTALL
-    )
+    match = re.search(r"def _cmd_queue_verdict.*?(?=\ndef _format_candidate)", source, re.DOTALL)
     assert match is not None
     handlers_source = match.group(0)
 

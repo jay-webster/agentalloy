@@ -9,8 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agentalloy.api.compose_router import get_orchestrator
-from agentalloy.api.retrieve_router import get_retrieve_orchestrator
+from agentalloy.api.deps import get_compose_orchestrator, get_retrieve_orchestrator
 from agentalloy.orchestration.retrieve import RetrieveOrchestrator
 from agentalloy.reads import get_active_fragments
 from agentalloy.retrieval.embedding_errors import (
@@ -57,7 +56,7 @@ def _install(app: FastAPI, orch: RetrieveOrchestrator) -> None:
     app.dependency_overrides[get_retrieve_orchestrator] = lambda: orch
     # Compose dep also required by lifespan; but lifespan is off in tests.
     # Install a no-op to be safe if a test accidentally triggers it.
-    app.dependency_overrides[get_orchestrator] = lambda: None  # type: ignore[return-value]
+    app.dependency_overrides[get_compose_orchestrator] = lambda: None  # type: ignore[return-value]
 
 
 # -------- AC-1: GET /retrieve/{skill_id} --------

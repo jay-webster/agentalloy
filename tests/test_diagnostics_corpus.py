@@ -7,14 +7,16 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agentalloy.api.deps import get_skill_store, get_vector_store
+
 
 def test_corpus_counts_returned(app: FastAPI) -> None:
     store = MagicMock()
     store.execute.return_value = [[30]]
     vector_store = MagicMock()
     vector_store.count_embeddings.return_value = 412
-    app.state.store = store
-    app.state.vector_store = vector_store
+    app.dependency_overrides[get_skill_store] = lambda: store
+    app.dependency_overrides[get_vector_store] = lambda: vector_store
 
     with TestClient(app) as client:
         resp = client.get("/diagnostics/corpus")
@@ -32,8 +34,8 @@ def test_corpus_partial_when_one_store_fails(app: FastAPI) -> None:
     store.execute.side_effect = Exception("Could not set lock on file")
     vector_store = MagicMock()
     vector_store.count_embeddings.return_value = 7
-    app.state.store = store
-    app.state.vector_store = vector_store
+    app.dependency_overrides[get_skill_store] = lambda: store
+    app.dependency_overrides[get_vector_store] = lambda: vector_store
 
     with TestClient(app) as client:
         resp = client.get("/diagnostics/corpus")
@@ -46,7 +48,10 @@ def test_corpus_partial_when_one_store_fails(app: FastAPI) -> None:
 
 
 def test_corpus_no_handles_returns_zeros(app: FastAPI) -> None:
-    # No store handles on app.state (no lifespan) → 0 / null, never a 500.
+    # No store handles bound (no lifespan) → 0 / null, never a 500.
+    app.dependency_overrides[get_skill_store] = lambda: None
+    app.dependency_overrides[get_vector_store] = lambda: None
+
     with TestClient(app) as client:
         resp = client.get("/diagnostics/corpus")
 

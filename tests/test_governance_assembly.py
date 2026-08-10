@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agentalloy.api.compose_models import ComposeRequest
-from agentalloy.api.compose_router import get_orchestrator
+from agentalloy.api.deps import get_compose_orchestrator
 from agentalloy.orchestration.compose import ComposeOrchestrator
 from agentalloy.reads.models import ActiveFragment
 from agentalloy.retrieval.domain import RetrievalResult
@@ -65,7 +65,7 @@ class _FakeOrchestrator(ComposeOrchestrator):
 
 
 def _install(app: FastAPI, orchestrator: ComposeOrchestrator) -> None:
-    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+    app.dependency_overrides[get_compose_orchestrator] = lambda: orchestrator
 
 
 def test_system_fragments_surfaced_in_composed_result(app: FastAPI, client: TestClient) -> None:

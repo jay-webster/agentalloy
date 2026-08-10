@@ -1631,6 +1631,7 @@ class TestReadinessDegradedMode:
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
+        from agentalloy.api import deps
         from agentalloy.api.health_router import ReadinessChecker, router
 
         app = FastAPI()
@@ -1639,9 +1640,10 @@ class TestReadinessDegradedMode:
         # Bootstrap is complete (marker file present)
         complete = tmp_path / ".bootstrap-complete"
         complete.touch()
-        app.state.readiness_checker = ReadinessChecker(app_dir=tmp_path)
+        rc = ReadinessChecker(app_dir=tmp_path)
+        app.dependency_overrides[deps.get_readiness_checker] = lambda: rc
         # Simulate corpus load error (degraded mode)
-        app.state.runtime_load_error = "Table Skill does not exist"
+        app.dependency_overrides[deps.get_runtime_load_error] = lambda: "Table Skill does not exist"
 
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/readiness")
@@ -1658,6 +1660,7 @@ class TestReadinessDegradedMode:
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
+        from agentalloy.api import deps
         from agentalloy.api.health_router import ReadinessChecker, router
 
         app = FastAPI()
@@ -1665,8 +1668,9 @@ class TestReadinessDegradedMode:
 
         complete = tmp_path / ".bootstrap-complete"
         complete.touch()
-        app.state.readiness_checker = ReadinessChecker(app_dir=tmp_path)
-        app.state.runtime_load_error = None  # no error
+        rc = ReadinessChecker(app_dir=tmp_path)
+        app.dependency_overrides[deps.get_readiness_checker] = lambda: rc
+        app.dependency_overrides[deps.get_runtime_load_error] = lambda: None  # no error
 
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/readiness")

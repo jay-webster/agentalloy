@@ -18,9 +18,9 @@ from fastapi.responses import JSONResponse
 
 from agentalloy.api.anthropic_passthrough import AnthropicPassthroughClient
 from agentalloy.api.compose_models import ErrorResponse
-from agentalloy.api.compose_router import get_orchestrator
 from agentalloy.api.compose_router import router as compose_router
 from agentalloy.api.corpus_ingest_router import router as corpus_ingest_router
+from agentalloy.api.deps import AppResources, set_app_resources
 from agentalloy.api.diagnostics_router import DiagnosticsChecker
 from agentalloy.api.diagnostics_router import router as diagnostics_router
 from agentalloy.api.health_router import HealthChecker, ReadinessChecker
@@ -28,9 +28,7 @@ from agentalloy.api.health_router import router as health_router
 from agentalloy.api.proxy_passthrough_router import router as passthrough_router
 from agentalloy.api.proxy_responses_router import router as responses_router
 from agentalloy.api.proxy_router import router as proxy_router
-from agentalloy.api.retrieve_router import get_retrieve_orchestrator
 from agentalloy.api.retrieve_router import router as retrieve_router
-from agentalloy.api.skill_router import get_skill_store
 from agentalloy.api.skill_router import router as skill_router
 from agentalloy.api.telemetry_router import TelemetryQuerier
 from agentalloy.api.telemetry_router import router as telemetry_router
@@ -93,8 +91,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app still starts — ``app.state.runtime`` is ``None`` and the health
     endpoint reflects ``unavailable`` while runtime handlers 503.
 
-    In tests we override ``get_orchestrator`` via ``app.dependency_overrides``
-    so no real DuckDB/Lance or embedding connection is created.
+    In tests we skip this lifespan (``use_default_lifespan=False``) and bind a
+    test ``AppResources`` via ``deps.set_app_resources`` instead, so no real
+    DuckDB/Lance or embedding connection is created.
     """
     settings = get_settings()
     settings.ensure_data_dirs()
@@ -131,9 +130,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.error("Runtime cache load failed — service will start in degraded mode: %s", exc)
         runtime_load_error = str(exc)
 
-    app.state.runtime = runtime
-    app.state.runtime_load_error = runtime_load_error
-
     # Wire orchestrators: prefer cache when available, fall back to store so
     # existing store-backed code paths still work (e.g. skill inspection).
     source = runtime if runtime is not None else store
@@ -152,13 +148,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         telemetry,
         embedding_model=settings.runtime_embedding_model,
     )
-    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
-    app.dependency_overrides[get_retrieve_orchestrator] = lambda: retrieve_orch
-    app.dependency_overrides[get_skill_store] = lambda: store  # inspection always live
-    # Stashed so an in-process corpus write (web reembed / wizard install) can
-    # rebind a freshly reloaded RuntimeCache — see web/runtime_refresh.py.
-    app.state.compose_orchestrator = orchestrator
-    app.state.retrieve_orchestrator = retrieve_orch
     health_checker = HealthChecker(
         store,
         embed_client,
@@ -171,27 +160,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             else None
         ),
     )
-    app.state.health_checker = health_checker
     # Readiness checker reads bootstrap markers under /app. Wire it whenever
     # the directory exists; on native installs /app won't exist and the
     # endpoint falls back to "ready" via its None-checker default.
+    readiness_checker: ReadinessChecker | None = None
     app_dir = Path("/app")
     if app_dir.is_dir():
-        app.state.readiness_checker = ReadinessChecker(app_dir=app_dir)
-    app.state.diagnostics_checker = DiagnosticsChecker(store, runtime, health_checker)
-    app.state.telemetry_querier = TelemetryQuerier(telemetry_store)
-    # Expose for proxy router dependencies
-    app.state.embed_client = embed_client
-    # The Lance fragment store (vector + BM25). Name kept as ``vector_store`` for
-    # the diagnostics/proxy app.state contract; it is a FragmentStore in v5.
-    app.state.vector_store = vector_store
-    # Service-owned telemetry.duck handle — the proxy trace writers and the
-    # telemetry querier record/read composition traces here (decoupled from the
-    # skill graph + Lance index so the reembed writer never contends — D4).
-    app.state.telemetry_store = telemetry_store
-    # Expose the live read-only SkillStore so diagnostics (e.g. corpus skill
-    # counts) can reuse the open handle instead of opening another one.
-    app.state.store = store
+        readiness_checker = ReadinessChecker(app_dir=app_dir)
+    diagnostics_checker = DiagnosticsChecker(store, runtime, health_checker)
+    telemetry_querier = TelemetryQuerier(telemetry_store)
 
     # Async client for embed proxy passthrough
     import contextlib as _ctx
@@ -203,7 +180,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             headers={"Content-Type": "application/json"},
             timeout=httpx.Timeout(connect=5.0, read=30.0),
         )
-    app.state.embed_async_client = embed_async_client
 
     # Upstream LLM client (for proxy passthrough)
     upstream_client: httpx.AsyncClient | None = None
@@ -218,33 +194,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             headers=upstream_headers,
             timeout=httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=5.0),
         )
-    app.state.upstream_client = upstream_client
-
-    # Per-repo upstream clients (adopted from a harness's own config via
-    # `agentalloy add` → .agentalloy/upstream). Lazily populated per distinct
-    # captured base_url by the proxy router; closed alongside the global client.
-    app.state.upstream_client_cache = {}
 
     # Native Anthropic passthrough client (the /proj/<token>/v1/messages path).
     # Always constructed (default upstream https://api.anthropic.com). It holds
     # NO Anthropic credential — it forwards the caller's own, verbatim.
     anthropic_passthrough_client = AnthropicPassthroughClient(settings.anthropic_upstream_url)
-    app.state.anthropic_passthrough_client = anthropic_passthrough_client
 
     # Native OpenAI Responses passthrough client (the /proj/<token>/v1/responses
     # path — codex et al.). Same auth-transparent contract; the client class is
     # protocol-agnostic despite its name. Spec: docs/responses-surface.md.
     responses_passthrough_client = AnthropicPassthroughClient(settings.responses_upstream_url)
-    app.state.responses_passthrough_client = responses_passthrough_client
 
     # Code-index module state: constructed only when the module's router was
     # actually mounted (toggle on AND the [code-index] extra importable). All
     # code_index imports stay inside this branch so a disabled module never
     # imports tree-sitter. Jobs run as asyncio tasks tracked on the state.
     code_index_state = None
-    _ci_provider = None
     if getattr(app.state, "module_status", {}).get("code_index") == "enabled":
-        from agentalloy.code_index.api.state import CodeIndexState, get_code_index_state
+        from agentalloy.code_index.api.state import CodeIndexState
         from agentalloy.code_index.store import open_jobs
 
         ci_jobs = open_jobs(settings)
@@ -269,9 +236,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.code_index_refresh_task = asyncio.create_task(
                 _code_index_refresh_loop(code_index_state, settings.code_index_refresh_seconds)
             )
-        _ci_provider = get_code_index_state
-        app.dependency_overrides[_ci_provider] = lambda: code_index_state
-        app.state.code_index_state = code_index_state
+
+    resources = AppResources(
+        settings=settings,
+        store=store,
+        vector_store=vector_store,
+        telemetry_store=telemetry_store,
+        embed_client=embed_client,
+        telemetry=telemetry,
+        runtime=runtime,
+        runtime_load_error=runtime_load_error,
+        compose_orchestrator=orchestrator,
+        retrieve_orchestrator=retrieve_orch,
+        health_checker=health_checker,
+        readiness_checker=readiness_checker,
+        diagnostics_checker=diagnostics_checker,
+        telemetry_querier=telemetry_querier,
+        embed_async_client=embed_async_client,
+        upstream_client=upstream_client,
+        anthropic_passthrough_client=anthropic_passthrough_client,
+        responses_passthrough_client=responses_passthrough_client,
+        code_index_state=code_index_state,
+    )
+    set_app_resources(resources)
 
     # Background release-update check — the service's only outbound call, kept
     # off the request path. Throttled (once per CHECK_INTERVAL_SECONDS), fail-
@@ -298,15 +285,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if code_index_state is not None:
             with suppress(Exception):
                 await code_index_state.aclose()
-        if _ci_provider is not None:
-            app.dependency_overrides.pop(_ci_provider, None)
-        app.dependency_overrides.pop(get_orchestrator, None)
-        app.dependency_overrides.pop(get_retrieve_orchestrator, None)
-        app.dependency_overrides.pop(get_skill_store, None)
         # Guard each close independently: a failure in one (e.g. an in-flight
         # passthrough request at shutdown) must not skip the rest and leak the
         # DuckDB / Lance connections.
-        cached_upstreams = list(getattr(app.state, "upstream_client_cache", {}).values())
+        cached_upstreams = list(resources.upstream_client_cache.values())
         for aclient in (embed_async_client, upstream_client, *cached_upstreams):
             if aclient is not None:
                 with suppress(Exception):
@@ -318,6 +300,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for closeable in (telemetry, embed_client, vector_store, store, telemetry_store):
             with suppress(Exception):
                 closeable.close()
+        set_app_resources(None)
 
 
 def _stage_error_response(stage: str, err: object) -> JSONResponse:
@@ -349,6 +332,60 @@ def create_app(*, use_default_lifespan: bool = True) -> FastAPI:
         description="Just-in-time context engine: instruction composition + code index.",
         lifespan=lifespan if use_default_lifespan else None,
     )
+
+    if not use_default_lifespan:
+        import agentalloy.api.deps as deps
+
+        app.dependency_overrides[deps.get_compose_orchestrator] = lambda: (
+            getattr(app.state, "orchestrator", None)
+            or getattr(app.state, "compose_orchestrator", None)
+        )
+        app.dependency_overrides[deps.get_retrieve_orchestrator] = lambda: getattr(
+            app.state, "retrieve_orchestrator", None
+        )
+        app.dependency_overrides[deps.get_skill_store] = lambda: getattr(app.state, "store", None)
+        app.dependency_overrides[deps.get_vector_store] = lambda: getattr(
+            app.state, "vector_store", None
+        )
+        app.dependency_overrides[deps.get_telemetry_store] = lambda: getattr(
+            app.state, "telemetry_store", None
+        )
+        app.dependency_overrides[deps.get_embed_client] = lambda: getattr(
+            app.state, "embed_client", None
+        )
+        app.dependency_overrides[deps.get_health_checker] = lambda: getattr(
+            app.state, "health_checker", None
+        )
+        app.dependency_overrides[deps.get_readiness_checker] = lambda: getattr(
+            app.state, "readiness_checker", None
+        )
+        app.dependency_overrides[deps.get_diagnostics_checker] = lambda: getattr(
+            app.state, "diagnostics_checker", None
+        )
+        app.dependency_overrides[deps.get_telemetry_querier] = lambda: getattr(
+            app.state, "telemetry_querier", None
+        )
+        app.dependency_overrides[deps.get_embed_async_client] = lambda: getattr(
+            app.state, "embed_async_client", None
+        )
+        app.dependency_overrides[deps.get_upstream_client] = lambda: getattr(
+            app.state, "upstream_client", None
+        )
+        app.dependency_overrides[deps.get_anthropic_passthrough_client] = lambda: getattr(
+            app.state, "anthropic_passthrough_client", None
+        )
+        app.dependency_overrides[deps.get_responses_passthrough_client] = lambda: getattr(
+            app.state, "responses_passthrough_client", None
+        )
+        app.dependency_overrides[deps.get_code_index_state] = lambda: getattr(
+            app.state, "code_index_state", None
+        )
+        app.dependency_overrides[deps.get_runtime_cache] = lambda: getattr(
+            app.state, "runtime", None
+        )
+        app.dependency_overrides[deps.get_runtime_load_error] = lambda: getattr(
+            app.state, "runtime_load_error", None
+        )
 
     @app.exception_handler(RetrievalStageError)
     async def _retrieval_handler(_req: Request, err: RetrievalStageError) -> JSONResponse:

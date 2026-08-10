@@ -18,12 +18,17 @@ from __future__ import annotations
 import asyncio
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
+from agentalloy.api import deps
 from agentalloy.web.config_api import _require_csrf
+
+if TYPE_CHECKING:
+    from agentalloy.runtime_state import RuntimeCache
+    from agentalloy.storage.protocols import FragmentStore, SkillStore
 
 router = APIRouter()
 
@@ -349,7 +354,9 @@ class PacksResponse(BaseModel):
 
 
 @router.get("/api/packs", response_model=PacksResponse, summary="Bundled packs + install state")
-async def list_packs(request: Request) -> PacksResponse:
+async def list_packs(
+    runtime: RuntimeCache | None = Depends(deps.get_runtime_cache),
+) -> PacksResponse:
     def _build() -> PacksResponse:
         import agentalloy
         from agentalloy.install.subcommands.install_packs import (
@@ -358,7 +365,6 @@ async def list_packs(request: Request) -> PacksResponse:
 
         packs_root = Path(agentalloy.__file__).resolve().parent / "_packs"
         manifests = _discover_packs(packs_root)
-        runtime = getattr(request.app.state, "runtime", None)
         corpus_ids: set[str] = set()
         if runtime is not None:
             corpus_ids = {s.skill_id for s in runtime.get_active_skills()}
@@ -392,16 +398,19 @@ class ReembedStatus(BaseModel):
     response_model=ReembedStatus,
     summary="Embedded vs pending fragment counts",
 )
-async def reembed_status(request: Request) -> ReembedStatus:
-    store = getattr(request.app.state, "store", None)
-    vector_store = getattr(request.app.state, "vector_store", None)
+async def reembed_status(
+    store: SkillStore | None = Depends(deps.get_skill_store),
+    vector_store: FragmentStore | None = Depends(deps.get_vector_store),
+) -> ReembedStatus:
     if store is None or vector_store is None:
         raise HTTPException(status_code=503, detail="stores unavailable")
 
     def _build() -> ReembedStatus:
+        from typing import cast
+
         from agentalloy.reembed.cli import discover_unembedded_fragments
 
-        pending = discover_unembedded_fragments(store, vector_store)
+        pending = discover_unembedded_fragments(cast(Any, store), cast(Any, vector_store))
         return ReembedStatus(
             embedded_total=int(vector_store.count_embeddings()),
             unembedded=len(pending),
@@ -416,13 +425,14 @@ class ReembedRequest(BaseModel):
 
 @router.post("/api/reembed", summary="Run a bulk reembed pass (or dry-run count)")
 async def reembed(
-    request: Request,
     body: ReembedRequest,
+    store: SkillStore | None = Depends(deps.get_skill_store),
+    vector_store: FragmentStore | None = Depends(deps.get_vector_store),
     x_agentalloy_csrf: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
     _require_csrf(x_agentalloy_csrf)
     if body.dry_run:
-        status = await reembed_status(request)
+        status = await reembed_status(store, vector_store)
         return {"dry_run": True, "would_embed": status.unembedded}
 
     def _run() -> dict[str, Any]:
@@ -434,11 +444,10 @@ async def reembed(
         # DuckDB grants the reembed writer only while nothing else has the
         # file open — release the handle for the duration, reconnect after,
         # then reload the cache so the new corpus serves without a restart.
-        store = getattr(request.app.state, "store", None)
         release = store.released() if store is not None else nullcontext()
         with release:
             rc = run_bulk_reembed(no_restart=True, result_sink=sink)
-        refreshed = refresh_runtime_cache(request.app)
+        refreshed = refresh_runtime_cache()
         return {"dry_run": False, "exit_code": rc, "cache_refreshed": refreshed, **sink}
 
     return await asyncio.to_thread(_run)

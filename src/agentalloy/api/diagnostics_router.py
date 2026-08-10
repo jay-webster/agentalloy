@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from agentalloy.api.deps import get_diagnostics_checker, get_skill_store, get_vector_store
 from agentalloy.api.health_router import DepStatus, HealthChecker
 from agentalloy.reads.active import get_active_skills
 from agentalloy.reads.models import ActiveSkill
 from agentalloy.runtime_state import RuntimeCache
-from agentalloy.storage.protocols import EMBEDDING_DIM, SkillStore
+from agentalloy.storage.protocols import EMBEDDING_DIM, FragmentStore, SkillStore
 
 router = APIRouter()
 
@@ -212,8 +213,9 @@ def compute_consistency(
     response_model=RuntimeDiagnosticsResponse,
     summary="Runtime stale-content diagnostics: store vs cache consistency and dependency readiness",
 )
-async def runtime_diagnostics(request: Request) -> RuntimeDiagnosticsResponse:
-    checker: DiagnosticsChecker | None = getattr(request.app.state, "diagnostics_checker", None)
+async def runtime_diagnostics(
+    checker: DiagnosticsChecker | None = Depends(get_diagnostics_checker),
+) -> RuntimeDiagnosticsResponse:
     if checker is None:
         # No live checker (e.g. test without lifespan): return empty/consistent stub.
         return RuntimeDiagnosticsResponse(
@@ -248,16 +250,16 @@ async def runtime_diagnostics(request: Request) -> RuntimeDiagnosticsResponse:
     response_model=CorpusDiagnosticsResponse,
     summary="Corpus counts (skills, embedded vectors, embedding dim) off the live store handles",
 )
-async def corpus_diagnostics(request: Request) -> CorpusDiagnosticsResponse:
-    """Report corpus counts using the long-lived store handles on app.state.
+async def corpus_diagnostics(
+    store: SkillStore | None = Depends(get_skill_store),
+    vector_store: FragmentStore | None = Depends(get_vector_store),
+) -> CorpusDiagnosticsResponse:
+    """Report corpus counts using the injected store handles.
 
     Each count is guarded independently: a single failing store yields 0/null
     for that field while the others are still reported. The endpoint never 500s.
     """
-    state = request.app.state
-
     skill_count = 0
-    store: SkillStore | None = getattr(state, "store", None)
     if store is not None:
         try:
             rows = store.execute("SELECT count(*) FROM skills")
@@ -268,7 +270,6 @@ async def corpus_diagnostics(request: Request) -> CorpusDiagnosticsResponse:
 
     embedded_vector_count = 0
     embedding_dim: int | None = None
-    vector_store = getattr(state, "vector_store", None)
     if vector_store is not None:
         try:
             embedded_vector_count = int(vector_store.count_embeddings())

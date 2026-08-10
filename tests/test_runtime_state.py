@@ -199,7 +199,10 @@ def _mock_healthy_checker(*, runtime_load_error: str | None = None) -> MagicMock
 
 def test_health_reports_unavailable_on_cache_load_failure(app: FastAPI) -> None:
     """AC-4: when runtime cache fails to load, health endpoint shows unavailable."""
-    app.state.health_checker = _mock_healthy_checker(runtime_load_error="simulated DB error")
+    from agentalloy.api import deps
+
+    hc = _mock_healthy_checker(runtime_load_error="simulated DB error")
+    app.dependency_overrides[deps.get_health_checker] = lambda: hc
     with TestClient(app) as c:
         resp = c.get("/health")
 
@@ -214,7 +217,10 @@ def test_health_reports_unavailable_on_cache_load_failure(app: FastAPI) -> None:
 
 def test_health_reports_healthy_when_cache_loaded(app: FastAPI) -> None:
     """AC-4 complement: healthy status when cache loaded successfully."""
-    app.state.health_checker = _mock_healthy_checker()
+    from agentalloy.api import deps
+
+    hc = _mock_healthy_checker()
+    app.dependency_overrides[deps.get_health_checker] = lambda: hc
     with TestClient(app) as c:
         resp = c.get("/health")
 

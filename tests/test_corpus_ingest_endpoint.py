@@ -52,7 +52,7 @@ def client(monkeypatch, released_flag):
     monkeypatch.setattr(mod, "_fragment_texts", lambda pack_dir: ["frag one", "frag two"])
     monkeypatch.setattr(mod, "_default_embed", lambda: lambda text: [0.0])
     monkeypatch.setattr(mod, "probe_lesson_duplicates", lambda *a, **k: [])  # no dups by default
-    monkeypatch.setattr(mod, "refresh_runtime_cache", lambda app: True)
+    monkeypatch.setattr(mod, "refresh_runtime_cache", lambda: True)
 
     store = _FakeStore()
 

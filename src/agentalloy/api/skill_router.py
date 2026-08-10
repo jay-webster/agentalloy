@@ -8,6 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from agentalloy.api.deps import get_skill_store
 from agentalloy.reads.active import (
     get_active_fragments_for_skill,
     get_active_skill_by_id,
@@ -42,10 +43,6 @@ class SkillInspectionResponse(BaseModel):
     is_active: bool
     active_version: ActiveVersionDetail
     fragments: list[FragmentDetail]
-
-
-def get_skill_store() -> SkillStore:
-    raise RuntimeError("get_skill_store must be bound during app lifespan; no default available")
 
 
 @router.get(

@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from agentalloy.api.anthropic_passthrough import AnthropicPassthroughClient
 from agentalloy.api.compose_models import ComposedResult, LatencyBreakdown
+from agentalloy.api.deps import get_compose_orchestrator
 from agentalloy.api.proxy_context import encode_proj_token
 from agentalloy.api.proxy_signal import SignalResult
 from agentalloy.app import create_app
@@ -89,9 +90,7 @@ def _make_app(
     # (a TelemetryStore on telemetry.duck) in v5.
     app.state.telemetry_store = MagicMock()
     if orchestrator is not None:
-        from agentalloy.api.compose_router import get_orchestrator
-
-        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+        app.dependency_overrides[get_compose_orchestrator] = lambda: orchestrator
     return app
 
 

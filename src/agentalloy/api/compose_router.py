@@ -13,14 +13,10 @@ from agentalloy.api.compose_models import (
     ErrorResponse,
     compose_request_from_contract,
 )
+from agentalloy.api.deps import get_compose_orchestrator
 from agentalloy.orchestration.compose import ComposeOrchestrator
 
 router = APIRouter()
-
-
-# Dependency provider — overridden in tests via app.dependency_overrides[].
-def get_orchestrator() -> ComposeOrchestrator:
-    raise RuntimeError("get_orchestrator must be bound during app lifespan; no default available")
 
 
 @router.post(
@@ -38,7 +34,7 @@ def get_orchestrator() -> ComposeOrchestrator:
 )
 async def compose(
     req: ComposeRequest,
-    orchestrator: ComposeOrchestrator = Depends(get_orchestrator),
+    orchestrator: ComposeOrchestrator = Depends(get_compose_orchestrator),
 ) -> ComposedResult | EmptyResult:
     return await orchestrator.compose(req)
 
@@ -51,7 +47,7 @@ async def compose(
 )
 async def compose_text(
     req: ComposeRequest,
-    orchestrator: ComposeOrchestrator = Depends(get_orchestrator),
+    orchestrator: ComposeOrchestrator = Depends(get_compose_orchestrator),
 ) -> PlainTextResponse:
     result = await orchestrator.compose(req)
     return PlainTextResponse(content=result.output)
@@ -76,7 +72,7 @@ class FromContractRequest(BaseModel):
 )
 async def compose_from_contract(
     req: FromContractRequest,
-    orchestrator: ComposeOrchestrator = Depends(get_orchestrator),
+    orchestrator: ComposeOrchestrator = Depends(get_compose_orchestrator),
 ) -> ComposedResult | EmptyResult:
     from agentalloy.contracts import (
         ContractMalformed,

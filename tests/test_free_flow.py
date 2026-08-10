@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from agentalloy.api.anthropic_passthrough import AnthropicPassthroughClient
 from agentalloy.api.compose_models import ComposedResult, LatencyBreakdown
+from agentalloy.api.deps import get_compose_orchestrator
 from agentalloy.api.proxy_context import encode_proj_token
 from agentalloy.api.proxy_models import ProxyMessage, ProxyRequest
 from agentalloy.api.proxy_signal import commit_markers, evaluate_signal
@@ -339,9 +340,7 @@ def _passthrough_app(
     )
     app.state.embed_client = MagicMock()
     app.state.telemetry_store = telemetry_store if telemetry_store is not None else MagicMock()
-    from agentalloy.api.compose_router import get_orchestrator
-
-    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+    app.dependency_overrides[get_compose_orchestrator] = lambda: orchestrator
     return app
 
 
@@ -457,9 +456,9 @@ class TestOpenAISurfaceFreeFlow:
         app.state.upstream_client = _openai_upstream(captured)
         app.state.embed_client = MagicMock()
         app.state.telemetry_store = store
-        from agentalloy.api.compose_router import get_orchestrator
-
-        app.dependency_overrides[get_orchestrator] = lambda: _orchestrator("DOMAIN-SKILL-PROSE")
+        app.dependency_overrides[get_compose_orchestrator] = lambda: _orchestrator(
+            "DOMAIN-SKILL-PROSE"
+        )
         body = {
             "model": "gpt-4",
             "messages": [

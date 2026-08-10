@@ -25,9 +25,7 @@ def append(
     queue_path: Path = DEFAULT_QUEUE_PATH,
 ) -> None:
     if verdict not in VALID_VERDICTS:
-        raise ValueError(
-            f"invalid verdict {verdict!r}, expected one of {sorted(VALID_VERDICTS)}"
-        )
+        raise ValueError(f"invalid verdict {verdict!r}, expected one of {sorted(VALID_VERDICTS)}")
     queue_path.parent.mkdir(parents=True, exist_ok=True)
     row = {"message_id": message_id, "verdict": verdict, "rationale": rationale}
     with queue_path.open("a") as f:

@@ -184,7 +184,7 @@ def test_reembed_run_releases_store_handle_around_write(client, monkeypatch: pyt
     )
     monkeypatch.setattr(
         "agentalloy.web.runtime_refresh.refresh_runtime_cache",
-        lambda app: events.append("refresh") or True,
+        lambda: events.append("refresh") or True,
     )
     r = client.post("/api/reembed", json={"dry_run": False}, headers=_CSRF)
     assert r.status_code == 200

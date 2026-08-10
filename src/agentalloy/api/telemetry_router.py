@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from agentalloy.api.deps import get_telemetry_querier
 from agentalloy.storage.protocols import CompositionTrace, TelemetryStore
 
 router = APIRouter()
@@ -209,7 +210,6 @@ def _empty_response(limit: int, offset: int) -> TracesResponse:
     summary="List composition traces with optional filtering and pagination",
 )
 async def list_traces(
-    request: Request,
     limit: int = Query(default=50, ge=1, le=_MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
     phase: str | None = Query(default=None),
@@ -220,8 +220,8 @@ async def list_traces(
         default=None,
         description="Scope to a project root (matches it or any subdirectory).",
     ),
+    querier: TelemetryQuerier | None = Depends(get_telemetry_querier),
 ) -> TracesResponse:
-    querier: TelemetryQuerier | None = getattr(request.app.state, "telemetry_querier", None)
     if querier is None:
         return _empty_response(limit, offset)
     return await querier.query(
@@ -241,11 +241,11 @@ async def list_traces(
     summary="Token-savings aggregation across compose traces",
 )
 async def get_savings(
-    request: Request,
     repo: str | None = Query(
         default=None,
         description="Scope to a project root (matches it or any subdirectory); omit for all repos.",
     ),
+    querier: TelemetryQuerier | None = Depends(get_telemetry_querier),
 ) -> SavingsResponse:
     """Return token-savings totals + per-phase breakdown from the open store.
 
@@ -254,7 +254,6 @@ async def get_savings(
     read-write lock, so a direct open would conflict. ``repo`` scopes the
     aggregation to a single project root (the CLI's default), omitted for ``--all``.
     """
-    querier: TelemetryQuerier | None = getattr(request.app.state, "telemetry_querier", None)
     if querier is None:
         return SavingsResponse(
             total_composes=0,
@@ -273,11 +272,11 @@ async def get_savings(
     summary="Coverage v2 — composed vs passthrough rate per phase and repo",
 )
 async def get_coverage(
-    request: Request,
     repo: str | None = Query(
         default=None,
         description="Scope to a project root (matches it or any subdirectory); omit for all repos.",
     ),
+    querier: TelemetryQuerier | None = Depends(get_telemetry_querier),
 ) -> CoverageResponse:
     """How often composition fires vs passes through, over proxy traces.
 
@@ -285,7 +284,6 @@ async def get_coverage(
     answered from the consolidated ``composition_traces`` rows (``event_type``
     ``proxy_composed`` vs ``proxy_passthrough``).
     """
-    querier: TelemetryQuerier | None = getattr(request.app.state, "telemetry_querier", None)
     if querier is None:
         return CoverageResponse(
             total=0, composed=0, passthrough=0, compose_rate=0.0, per_phase=[], per_repo=[]

@@ -21,6 +21,7 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from agentalloy.api import deps
 from agentalloy.api.proxy_apply import (
     InjectOutcome,
     ProxyComposeTelemetry,
@@ -56,80 +57,20 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# Dependency providers — overridden in tests via app.dependency_overrides[]
-# ---------------------------------------------------------------------------
-
-
-def get_upstream_client(request: Request) -> httpx.AsyncClient | None:
-    """Return the upstream LLM httpx.AsyncClient (lifespan-scoped, via app.state).
-
-    Returns None if the upstream is not configured.
-    """
-    return getattr(request.app.state, "upstream_client", None)
-
-
-def get_embed_client(request: Request) -> EmbedClient | None:
-    """Return the embedding client from app.state."""
-    return getattr(request.app.state, "embed_client", None)
-
-
-def get_embed_async_client(request: Request) -> httpx.AsyncClient | None:
-    """Return the async embed client from app.state for proxy passthrough."""
-    return getattr(request.app.state, "embed_async_client", None)
-
-
-def get_vector_store(request: Request) -> TelemetryStore | None:
-    """Return the telemetry store from app.state (the proxy trace sink).
-
-    Named ``get_vector_store`` for call-site stability; in v5 the proxy telemetry
-    path writes composition traces to the service-owned telemetry.duck, so this
-    resolves ``app.state.telemetry_store`` (not the Lance fragment store).
-    """
-    return getattr(request.app.state, "telemetry_store", None)
-
-
-def get_orchestrator_for_proxy(request: Request) -> ComposeOrchestrator | None:
-    """Return the ComposeOrchestrator via dependency overrides or app.state."""
-    # Try the dependency override pattern (same as compose_router)
-    try:
-        from agentalloy.api.compose_router import get_orchestrator
-
-        app = request.app
-        override = app.dependency_overrides.get(get_orchestrator)
-        if override is not None:
-            return override()
-    except Exception:  # noqa: BLE001
-        pass
-    return None
-
-
-def get_settings_for_proxy(request: Request) -> AppSettings:
-    """Return Settings instance for proxy (used for upstream_model override)."""
-    from agentalloy.config import Settings as AppSettings
-
-    return AppSettings()
-
-
-# ---------------------------------------------------------------------------
 # Upstream resolution (per-repo .agentalloy/upstream → global fallback)
 # ---------------------------------------------------------------------------
 
 
-def _get_or_create_upstream_client(
-    app: Any, base_url: str, api_key: str | None
-) -> httpx.AsyncClient:
+def _get_or_create_upstream_client(base_url: str, api_key: str | None) -> httpx.AsyncClient:
     """Return a cached httpx client for *base_url* (per-repo upstream).
 
-    Cached on ``app.state.upstream_client_cache`` keyed by ``base_url`` so each
+    Cached on ``AppResources.upstream_client_cache`` keyed by ``base_url`` so each
     distinct captured upstream reuses one connection pool. The client carries no
     ``base_url`` of its own — callers post absolute URLs — so a harness upstream
     served under a subpath (``…/v1``) is preserved verbatim rather than mangled
     by httpx base-path joining. Closed on lifespan shutdown.
     """
-    cache: dict[str, httpx.AsyncClient] | None = getattr(app.state, "upstream_client_cache", None)
-    if cache is None:
-        cache = {}
-        app.state.upstream_client_cache = cache
+    cache = deps.get_app_resources().upstream_client_cache
     client = cache.get(base_url)
     if client is None:
         headers = {"Content-Type": "application/json"}
@@ -144,7 +85,6 @@ def _get_or_create_upstream_client(
 
 
 def _resolve_upstream(
-    app: Any,
     cwd: Path,
     default_client: httpx.AsyncClient | None,
     default_model: str,
@@ -161,7 +101,7 @@ def _resolve_upstream(
     up = read_upstream(cwd)
     if up is not None:
         api_key = os.environ.get(up.key_env) if up.key_env else None
-        client = _get_or_create_upstream_client(app, up.url, api_key)
+        client = _get_or_create_upstream_client(up.url, api_key)
         return client, f"{up.url}/chat/completions", up.model
     if default_client is not None:
         return default_client, "/v1/chat/completions", default_model
@@ -441,11 +381,11 @@ async def proxy_chat_completions(
     request: ProxyRequest,
     fastapi_request: Request,
     token: str | None = None,
-    upstream: httpx.AsyncClient | None = Depends(get_upstream_client),
-    embed_client: EmbedClient | None = Depends(get_embed_client),
-    vector_store: TelemetryStore | None = Depends(get_vector_store),
-    orchestrator: ComposeOrchestrator | None = Depends(get_orchestrator_for_proxy),
-    settings: AppSettings = Depends(get_settings_for_proxy),  # pyright: ignore[reportUnknownArgumentType]
+    upstream: httpx.AsyncClient | None = Depends(deps.get_upstream_client),
+    embed_client: EmbedClient | None = Depends(deps.get_embed_client),
+    vector_store: TelemetryStore | None = Depends(deps.get_telemetry_store),
+    orchestrator: ComposeOrchestrator | None = Depends(deps.get_compose_orchestrator),
+    settings: AppSettings = Depends(deps.get_settings),
 ):
     """Integrated proxy handler: signal -> compose -> inject -> forward -> telemetry.
 
@@ -479,9 +419,7 @@ async def proxy_chat_completions(
     # Resolve the upstream to forward to: a per-repo .agentalloy/upstream (adopted
     # from the harness's own config by `agentalloy add`) wins, else the global
     # lifespan client. 503 only when neither resolves.
-    resolved_upstream = _resolve_upstream(
-        fastapi_request.app, cwd, upstream, settings.upstream_model
-    )
+    resolved_upstream = _resolve_upstream(cwd, upstream, settings.upstream_model)
     if resolved_upstream is None:
         return _upstream_not_configured_error()
     upstream_client, chat_url, upstream_model = resolved_upstream
@@ -838,7 +776,7 @@ async def proxy_chat_completions(
 async def proxy_embeddings(
     request: Request,
     token: str | None = None,
-    embed_async_client: httpx.AsyncClient | None = Depends(get_embed_async_client),
+    embed_async_client: httpx.AsyncClient | None = Depends(deps.get_embed_async_client),
 ):
     """Forward /v1/embeddings to the embed server.
 

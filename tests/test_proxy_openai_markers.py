@@ -25,6 +25,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from agentalloy.api.compose_models import ComposedResult, LatencyBreakdown
+from agentalloy.api.deps import get_compose_orchestrator
 from agentalloy.api.proxy_signal import SignalResult
 from agentalloy.app import create_app
 from agentalloy.orchestration.compose import ComposeOrchestrator
@@ -89,9 +90,7 @@ def _make_app(
     app.state.embed_client = MagicMock()
     app.state.vector_store = MagicMock()
     if orchestrator is not None:
-        from agentalloy.api.compose_router import get_orchestrator
-
-        app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+        app.dependency_overrides[get_compose_orchestrator] = lambda: orchestrator
     return app
 
 

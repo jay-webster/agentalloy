@@ -27,6 +27,7 @@ import httpx
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 
+from agentalloy.api import deps
 from agentalloy.api.anthropic_passthrough import AnthropicPassthroughClient
 from agentalloy.api.proxy_apply import (
     InjectOutcome,
@@ -41,11 +42,6 @@ from agentalloy.api.proxy_injection import (
     inject_into_anthropic_system_prompt,
 )
 from agentalloy.api.proxy_models import ProxyMessage, ProxyRequest
-from agentalloy.api.proxy_router import (
-    get_embed_client,
-    get_orchestrator_for_proxy,
-    get_vector_store,
-)
 from agentalloy.api.proxy_session import extract_session_header
 from agentalloy.api.proxy_signal import SignalResult, evaluate_signal, phase_directive
 from agentalloy.api.proxy_telemetry import write_proxy_trace
@@ -80,11 +76,6 @@ _RESPONSE_HOP = frozenset(
         "upgrade",
     }
 )
-
-
-def get_passthrough_client(request: Request) -> AnthropicPassthroughClient | None:
-    """Return the lifespan-scoped passthrough client from app.state."""
-    return getattr(request.app.state, "anthropic_passthrough_client", None)
 
 
 def _proxy_request_from_anthropic(payload: dict[str, Any]) -> ProxyRequest:
@@ -330,10 +321,10 @@ def _response_headers(headers: httpx.Headers, *, decoded_body: bool) -> dict[str
 async def passthrough_anthropic_messages(
     token: str,
     request: Request,
-    client: AnthropicPassthroughClient | None = Depends(get_passthrough_client),
-    embed_client: EmbedClient | None = Depends(get_embed_client),
-    orchestrator: ComposeOrchestrator | None = Depends(get_orchestrator_for_proxy),
-    vector_store: TelemetryStore | None = Depends(get_vector_store),
+    client: AnthropicPassthroughClient | None = Depends(deps.get_anthropic_passthrough_client),
+    embed_client: EmbedClient | None = Depends(deps.get_embed_client),
+    orchestrator: ComposeOrchestrator | None = Depends(deps.get_compose_orchestrator),
+    vector_store: TelemetryStore | None = Depends(deps.get_telemetry_store),
 ) -> Response | StreamingResponse:
     raw_body = await request.body()
     query_string = request.url.query

@@ -21,13 +21,17 @@ import asyncio
 import re
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import yaml
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
+from agentalloy.api import deps
 from agentalloy.web.config_api import _require_csrf
+
+if TYPE_CHECKING:
+    from agentalloy.storage.protocols import SkillStore
 
 router = APIRouter()
 
@@ -180,9 +184,9 @@ class InstallRequest(BaseModel):
     summary="Approve (when in the add-skill lane) and install the pack",
 )
 async def install(
-    request: Request,
     body: InstallRequest,
     x_agentalloy_csrf: Annotated[str | None, Header()] = None,
+    store: SkillStore | None = Depends(deps.get_skill_store),
 ) -> dict[str, Any]:
     _require_csrf(x_agentalloy_csrf)
     root = Path(body.repo)
@@ -213,7 +217,6 @@ async def install(
         # the newly installed skills serve without a restart.
         from agentalloy.web.runtime_refresh import refresh_runtime_cache
 
-        store = getattr(request.app.state, "store", None)
         release = store.released() if store is not None else nullcontext()
         with release:
             result = install_local_pack(
@@ -223,7 +226,7 @@ async def install(
                 strict=True,
                 allow_duplicates=body.allow_duplicates,
             )
-        refreshed = refresh_runtime_cache(request.app)
+        refreshed = refresh_runtime_cache()
         return {"approval": approval, "install": result, "cache_refreshed": refreshed}
 
     return await asyncio.to_thread(_run)

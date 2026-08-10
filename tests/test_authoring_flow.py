@@ -21,7 +21,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agentalloy.api.skill_router import get_skill_store
+from agentalloy.api.deps import get_skill_store
 from agentalloy.authoring.driver import load_authoring_prompt
 from agentalloy.bootstrap import EXIT_OK as BOOTSTRAP_OK
 from agentalloy.bootstrap import main as bootstrap_main

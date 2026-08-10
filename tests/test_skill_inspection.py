@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agentalloy.api.skill_router import get_skill_store
+from agentalloy.api.deps import get_skill_store
 from agentalloy.storage.skill_store import DuckDBSkillStore, open_skill_store
 
 

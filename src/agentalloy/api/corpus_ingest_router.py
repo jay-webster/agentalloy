@@ -167,7 +167,7 @@ def _run_ingest(app: Any, body: IngestPackRequest) -> dict[str, Any]:
                 allow_unreviewed=body.allow_unreviewed,
                 run_reembed=body.reembed,
             )
-        refresh_runtime_cache(app)
+        refresh_runtime_cache()
         return result
 
 

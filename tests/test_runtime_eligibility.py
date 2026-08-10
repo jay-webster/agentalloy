@@ -17,9 +17,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agentalloy.api.compose_router import get_orchestrator
-from agentalloy.api.retrieve_router import get_retrieve_orchestrator
-from agentalloy.api.skill_router import get_skill_store
+from agentalloy.api.deps import (
+    get_compose_orchestrator,
+    get_retrieve_orchestrator,
+    get_skill_store,
+)
 from agentalloy.orchestration.retrieve import RetrieveOrchestrator
 from agentalloy.reads import InconsistentActiveVersion, get_active_version_by_id
 from agentalloy.storage.protocols import FragmentStore
@@ -166,7 +168,7 @@ def test_inconsistent_state_returns_500_on_retrieve_by_id(
         embedding_model="stub-embed",
     )
     app.dependency_overrides[get_retrieve_orchestrator] = lambda: orch
-    app.dependency_overrides[get_orchestrator] = lambda: None  # type: ignore[return-value]
+    app.dependency_overrides[get_compose_orchestrator] = lambda: None  # type: ignore[return-value]
     with TestClient(app) as c:
         resp = c.get("/retrieve/broken-skill")
     assert resp.status_code == 500
@@ -191,7 +193,7 @@ def test_compose_uses_only_active_fragments(
         NullTelemetryWriter(),
         embedding_model="stub-embed",
     )
-    app.dependency_overrides[get_orchestrator] = lambda: orch
+    app.dependency_overrides[get_compose_orchestrator] = lambda: orch
     with TestClient(app) as c:
         resp = c.post("/compose", json={"task": "fastapi endpoint", "phase": "design"})
     # 200 or 503 (retrieval failure) but NOT 500 (no inconsistency)

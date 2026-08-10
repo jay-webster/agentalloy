@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from agentalloy.api.compose_models import ErrorResponse
+from agentalloy.api.deps import get_retrieve_orchestrator
 from agentalloy.api.retrieve_models import (
     RetrieveByIdResponse,
     RetrieveQueryRequest,
@@ -13,12 +14,6 @@ from agentalloy.api.retrieve_models import (
 from agentalloy.orchestration.retrieve import RetrieveOrchestrator
 
 router = APIRouter()
-
-
-def get_retrieve_orchestrator() -> RetrieveOrchestrator:
-    raise RuntimeError(
-        "get_retrieve_orchestrator must be bound during app lifespan; no default available"
-    )
 
 
 @router.get(

@@ -16,10 +16,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from agentalloy import __version__
+from agentalloy.api.deps import get_health_checker, get_readiness_checker, get_runtime_load_error
 from agentalloy.embed_provider import EmbedClient
 from agentalloy.lm_client import LMClientError
 from agentalloy.storage.protocols import SkillStore, TelemetryStore
@@ -252,8 +253,9 @@ class HealthChecker:
     response_model=HealthResponse,
     summary="Service health and dependency readiness",
 )
-async def health(request: Request) -> HealthResponse:
-    checker: HealthChecker | None = getattr(request.app.state, "health_checker", None)
+async def health(
+    request: Request, checker: HealthChecker | None = Depends(get_health_checker)
+) -> HealthResponse:
     modules: dict[str, ModuleStatus] | None = getattr(request.app.state, "module_status", None)
     if checker is None:
         # No checker (lifespan-less TestClient): version is still known; the
@@ -391,10 +393,12 @@ class ReadinessChecker:
     "/readiness",
     summary="Container bootstrap readiness (ready / warming_up / error)",
 )
-async def readiness(request: Request) -> ReadinessResponse:
+async def readiness(
+    checker: ReadinessChecker | None = Depends(get_readiness_checker),
+    runtime_load_error: str | None = Depends(get_runtime_load_error),
+) -> ReadinessResponse:
     from fastapi.responses import JSONResponse as _JSONResponse  # noqa: PLC0415
 
-    checker: ReadinessChecker | None = getattr(request.app.state, "readiness_checker", None)
     if checker is None:
         # No checker wired (e.g. native deployment) — service is ready by
         # definition; there is no bootstrap to wait on.
@@ -407,19 +411,17 @@ async def readiness(request: Request) -> ReadinessResponse:
     # (e.g. "Table Skill does not exist" — corpus unusable). Report 503 with
     # the reason so the installer polling loop surfaces it to the user instead
     # of silently reporting the container as ready when the corpus is broken.
-    if result.status == "ready":
-        runtime_load_error: str | None = getattr(request.app.state, "runtime_load_error", None)
-        if runtime_load_error is not None:
-            body = ReadinessResponse(
-                status="error",
-                progress={
-                    "error": "corpus_unavailable",
-                    "detail": runtime_load_error,
-                },
-            )
-            return _JSONResponse(  # type: ignore[return-value]
-                status_code=503,
-                content=body.model_dump(),
-            )
+    if result.status == "ready" and runtime_load_error is not None:
+        body = ReadinessResponse(
+            status="error",
+            progress={
+                "error": "corpus_unavailable",
+                "detail": runtime_load_error,
+            },
+        )
+        return _JSONResponse(  # type: ignore[return-value]
+            status_code=503,
+            content=body.model_dump(),
+        )
 
     return result
