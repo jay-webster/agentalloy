@@ -8,7 +8,7 @@ lives here — applying a queued verdict is the job of the
 `apply-review-queue` routine, not this module.
 """
 
-from __future__ import annotations      
+from __future__ import annotations
 
 import json
 from pathlib import Path
